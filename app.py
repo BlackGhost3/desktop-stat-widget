@@ -1598,11 +1598,22 @@ class Card(QWidget):
             self.tell("Updates", f"Update failed. {err}")
             return
         self.save()
-        if updater.FROZEN:
-            subprocess.Popen([sys.executable], cwd=updater.APP_DIR)
-        else:
-            subprocess.Popen([sys.executable, os.path.join(updater.APP_DIR, "app.py")], cwd=updater.APP_DIR)
+        restart_app()
         self.quit()
+
+
+def restart_app():
+    """Starts a fresh copy of the app, for use right before this one quits.
+
+    A packaged one-file exe unpacks itself into a temporary folder that is deleted when it exits. A copy started
+    with our environment would try to reuse that folder and fail with "no Qt platform plugin could be
+    initialized", so the new copy must be told to unpack its own."""
+    env = {k: v for k, v in os.environ.items() if "_MEI" not in v and not k.startswith("_PYI")}
+    env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+    env["PATH"] = os.pathsep.join(p for p in os.environ.get("PATH", "").split(os.pathsep) if "_MEI" not in p)
+    command = [sys.executable] if updater.FROZEN else [sys.executable, os.path.join(updater.APP_DIR, "app.py")]
+    flags = 0x00000008 | 0x00000200  # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+    subprocess.Popen(command, cwd=updater.APP_DIR, env=env, creationflags=flags, close_fds=True)
 
 
 def main():
@@ -1610,6 +1621,8 @@ def main():
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
     card = Card()
+    if "--selftest-restart" in sys.argv:  # exercises the update restart path without needing an update
+        QTimer.singleShot(4000, lambda: (restart_app(), card.quit()))
     if "--selftest" in sys.argv:
         QTimer.singleShot(7000, lambda: (print("ok", card.l_ip.text(), card.m_cpu.val.text(), card.m_gpu.val.text()), card.quit()))
     sys.exit(app.exec())
