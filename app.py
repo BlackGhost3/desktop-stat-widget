@@ -45,6 +45,7 @@ def label(text="", dim=False, mono=False, align=None):
     lb = QLabel(text)
     lb.setProperty("dim", dim)
     lb.setProperty("mono", mono)
+    lb.setAttribute(Qt.WA_TransparentForMouseEvents)
     if align:
         lb.setAlignment(align)
     return lb
@@ -382,7 +383,7 @@ class Card(QWidget):
         self.title.setStyleSheet("font-size:12px;" if mini else "font-weight:500; font-size:13px;")
         if not mini:
             self.title.setText("System")
-            self.title.setToolTip("")
+            self.setToolTip("")
         self.btn_menu.setVisible(not mini)
         self.layout().setContentsMargins(*((10, 4, 6, 4) if mini else (12, 10, 12, 12)))
         self.body.setFixedWidth(330 if full else 270)
@@ -481,7 +482,7 @@ class Card(QWidget):
                 item("↓", BLUE, f"{down:.0f}") + "&nbsp;" + item("↑", BLUE, f"{up:.0f}"),
                 item("R", AMBER, f"{rd / 1e6:.0f}") + "&nbsp;" + item("W", AMBER, f"{wr / 1e6:.0f}"),
             ]))
-            self.title.setToolTip("CPU · GPU · RAM · network down/up Mb/s · disk read/write MB/s")
+            self.setToolTip("CPU · GPU · RAM · network down/up Mb/s · disk read/write MB/s")
 
     def refresh_net_config(self):
         def work():
