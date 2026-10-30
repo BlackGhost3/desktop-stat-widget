@@ -35,7 +35,11 @@ A small always-on-top Windows widget (Python + PySide6) showing live system stat
 - Start with Windows
 - Update check and one-click install from GitHub releases
 
-## Run
+## Install
+
+**Download:** get `DesktopStatWidget.exe` from the [latest release](https://github.com/BlackGhost3/desktop-stat-widget/releases/latest) and run it. No Python needed. Windows SmartScreen may warn about an unrecognized app because the exe isn't code-signed; choose "More info", then "Run anyway". The exe updates itself from new releases.
+
+**From source:**
 
 ```bash
 pip install -r requirements.txt
@@ -43,6 +47,8 @@ python app.py
 ```
 
 Or double-click `run.bat`.
+
+**Build the exe yourself:** `pip install pyinstaller`, then run `build.bat`. The result is `dist\DesktopStatWidget.exe`.
 
 ## Use
 
@@ -57,13 +63,13 @@ Settings and profiles are stored in `%APPDATA%\StatWidget\config.json`.
 
 ## Publishing an update
 
-Bump `VERSION` in `updater.py`, push, then create a release whose tag is the new version:
+Bump `VERSION` in `updater.py`, push, run `build.bat`, then create a release whose tag is the new version and attach the exe:
 
 ```bash
-gh release create v1.1.0 --title "v1.1.0" --notes "What changed"
+gh release create v1.2.0 dist\DesktopStatWidget.exe --title "v1.2.0" --notes "What changed"
 ```
 
-The widget checks on launch and from the menu. Installing downloads the release source, replaces the `.py`, `.txt`, `.bat` and `.md` files, and restarts. A git checkout is never overwritten; the widget opens the release page instead.
+The widget checks on launch and from the menu. The packaged exe downloads the new `DesktopStatWidget.exe` from the release, swaps itself, and restarts. A copy run from source downloads the release source and replaces the `.py`, `.txt`, `.bat` and `.md` files. A git checkout is never overwritten; the widget opens the release page instead.
 
 ## Notes
 

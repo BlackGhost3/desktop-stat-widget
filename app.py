@@ -1476,6 +1476,10 @@ class Card(QWidget):
                         "checkout, so update it with git pull. Open the release page?"):
                 webbrowser.open(info["page"])
             return
+        if updater.FROZEN and not info.get("exe"):
+            self.tell("Update available", f"{info['tag']} is available but has no program file attached yet. "
+                      "Try again later.")
+            return
         notes = info["notes"].strip()[:400]
         if not self.ask("Update available", f"Version {info['tag']} is available "
                         f"(you have {updater.VERSION}).\n\n{notes}\n\nInstall it and restart?"):
@@ -1483,7 +1487,10 @@ class Card(QWidget):
 
         def work():
             try:
-                updater.install(info["zip"])
+                if updater.FROZEN:
+                    updater.install_exe(info["exe"])
+                else:
+                    updater.install(info["zip"])
                 self.bridge.update_installed.emit(None)
             except (updater.UpdateError, OSError) as err:
                 self.bridge.update_installed.emit(str(err))
@@ -1494,11 +1501,15 @@ class Card(QWidget):
             self.tell("Updates", f"Update failed. {err}")
             return
         self.save()
-        subprocess.Popen([sys.executable, os.path.join(updater.APP_DIR, "app.py")], cwd=updater.APP_DIR)
+        if updater.FROZEN:
+            subprocess.Popen([sys.executable], cwd=updater.APP_DIR)
+        else:
+            subprocess.Popen([sys.executable, os.path.join(updater.APP_DIR, "app.py")], cwd=updater.APP_DIR)
         self.quit()
 
 
 def main():
+    updater.cleanup_old_exe()
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
     card = Card()

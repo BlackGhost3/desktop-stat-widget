@@ -14,6 +14,8 @@ CONFIG_PATH = os.path.join(CONFIG_DIR, "config.json")
 
 def _launch_command():
     exe = sys.executable
+    if getattr(sys, "frozen", False):
+        return f'"{exe}"'  # the packaged app is its own launcher
     if exe.lower().endswith("python.exe"):
         exe = exe[:-10] + "pythonw.exe"  # no console window at login
     script = os.path.abspath(os.path.join(os.path.dirname(__file__), "app.py"))
