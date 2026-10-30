@@ -125,6 +125,56 @@ class Metric(QWidget):
         self.val.setText(text)
 
 
+class IconBtn(QToolButton):
+    """Header button with a vector line icon drawn on a 16x16 grid."""
+
+    def __init__(self, kind, tip, checkable=False):
+        super().__init__()
+        self.kind = kind
+        self.setToolTip(tip)
+        self.setCheckable(checkable)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setFixedSize(26, 26)
+
+    def paintEvent(self, _):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        hover, on = self.underMouse(), self.isChecked()
+        if on or hover:
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor("#232638" if on else LINE))
+            p.drawRoundedRect(self.rect(), 7, 7)
+        color = QColor(BLUE if on else (TEXT if hover else DIM))
+        p.translate((self.width() - 16) / 2, (self.height() - 16) / 2)
+        pen = QPen(color, 1.4)
+        pen.setCapStyle(Qt.RoundCap)
+        pen.setJoinStyle(Qt.RoundJoin)
+        p.setPen(pen)
+        p.setBrush(Qt.NoBrush)
+        k = self.kind
+        if k == "globe":
+            p.drawEllipse(QRectF(2, 2, 12, 12))
+            p.drawEllipse(QRectF(5.5, 2, 5, 12))
+            p.drawLine(QPointF(2, 8), QPointF(14, 8))
+        elif k == "pulse":
+            p.drawPolyline([QPointF(1.5, 8), QPointF(4.5, 8), QPointF(6.5, 3), QPointF(9.5, 13),
+                            QPointF(11.5, 8), QPointF(14.5, 8)])
+        elif k == "size":
+            p.drawPolyline([QPointF(2, 6), QPointF(2, 2), QPointF(6, 2)])
+            p.drawPolyline([QPointF(10, 14), QPointF(14, 14), QPointF(14, 10)])
+            p.drawLine(QPointF(2.5, 2.5), QPointF(6.5, 6.5))
+            p.drawLine(QPointF(13.5, 13.5), QPointF(9.5, 9.5))
+        elif k == "pin":
+            p.drawPolygon([QPointF(5.5, 2), QPointF(10.5, 2), QPointF(10, 7), QPointF(12.5, 9.5),
+                           QPointF(3.5, 9.5), QPointF(6, 7)])
+            p.drawLine(QPointF(8, 9.5), QPointF(8, 14))
+        elif k == "menu":
+            p.setPen(Qt.NoPen)
+            p.setBrush(color)
+            for x in (3, 8, 13):
+                p.drawEllipse(QPointF(x, 8), 1.3, 1.3)
+
+
 class PingBridge(QObject):
     result = Signal(object)
     netdone = Signal()
@@ -175,11 +225,11 @@ class Card(QWidget):
         self.title = label("System")
         self.title.setStyleSheet("font-weight:500; font-size:13px;")
         head.addWidget(self.title, 1)
-        self.btn_net = self.tool("🌐", "Network settings", checkable=True)
-        self.btn_ping = self.tool("⚡", "Ping", checkable=True)
-        self.btn_mode = self.tool("⇱", "Cycle size: full / compact / mini")
-        self.btn_pin = self.tool("📌", "Always on top", checkable=True)
-        self.btn_menu = self.tool("⋯", "Menu")
+        self.btn_net = IconBtn("globe", "Network settings", checkable=True)
+        self.btn_ping = IconBtn("pulse", "Ping", checkable=True)
+        self.btn_mode = IconBtn("size", "Cycle size: full / compact / mini")
+        self.btn_pin = IconBtn("pin", "Always on top", checkable=True)
+        self.btn_menu = IconBtn("menu", "Menu")
         self.btn_pin.setChecked(self.pinned)
         self.btn_net.toggled.connect(lambda on: self.panel_net.setVisible(on and self.mode == "full"))
         self.btn_ping.toggled.connect(lambda on: self.panel_ping.setVisible(on and self.mode == "full"))
@@ -222,14 +272,6 @@ class Card(QWidget):
         root.addWidget(self.panel_ping)
         self.panel_net.hide()
         self.panel_ping.hide()
-
-    def tool(self, text, tip, checkable=False):
-        b = QToolButton()
-        b.setText(text)
-        b.setToolTip(tip)
-        b.setCheckable(checkable)
-        b.setCursor(Qt.PointingHandCursor)
-        return b
 
     def panel(self):
         w = QWidget()
