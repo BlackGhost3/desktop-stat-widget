@@ -395,8 +395,13 @@ class Card(QWidget):
         b_copy = QPushButton("Copy")
         b_copy.setProperty("small", True)
         b_copy.clicked.connect(lambda: self.copy_text(self.f_url.text(), "link"))
+        b_new = QPushButton("New link")
+        b_new.setProperty("small", True)
+        b_new.setToolTip("Creates a new link and QR code. The old ones stop working.")
+        b_new.clicked.connect(self.refresh_link)
         urlrow.addWidget(self.f_url, 1)
         urlrow.addWidget(b_copy)
+        urlrow.addWidget(b_new)
         self.url_box = QWidget()
         self.url_box.setLayout(urlrow)
         urlrow.setContentsMargins(0, 0, 0, 0)
@@ -1025,6 +1030,18 @@ class Card(QWidget):
         self.b_local.setText("Stop")
         self.l_local_status.setText("Waiting for a device. Scan the code or open the link on the same network. "
                                     "If it can't connect, press Allow in firewall.")
+        self.adjustSize()
+
+    def refresh_link(self):
+        if not self.local:
+            return
+        self.local.refresh()
+        url = self.local.url(self.netinfo.get("ip") or localtest.lan_ip())
+        self.f_url.setText(url)
+        self.f_url.setCursorPosition(0)
+        self.qr.set_data(url)
+        self.done_card.hide()
+        self.l_local_status.setText("New link created. The old link and QR code no longer work.")
         self.adjustSize()
 
     def stop_local(self):

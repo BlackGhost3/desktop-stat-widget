@@ -121,6 +121,7 @@ def lan_ip():
 
 class _Server(ThreadingHTTPServer):
     daemon_threads = True
+    allow_reuse_address = False  # on Windows this would let two servers share one port
 
     def __init__(self, addr, token, on_result):
         super().__init__(addr, _Handler)
@@ -230,6 +231,12 @@ class LocalServer:
             raise OSError("No free port between 8765 and 8784.")
         self.port = port
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def refresh(self):
+        """Issues a new token. The old link and QR code stop working immediately."""
+        self.token = secrets.token_urlsafe(6)
+        if self.server:
+            self.server.token = self.token
 
     def url(self, ip):
         return f"http://{ip}:{self.port}/?t={self.token}"
