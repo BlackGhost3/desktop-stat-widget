@@ -193,6 +193,7 @@ class Card(QWidget):
         self.opacity = self.cfg.get("opacity", 100)
         self.fade = self.cfg.get("fade", True)
         self.idle = self.cfg.get("idle_opacity", 70)
+        self.gpu_on = self.cfg.get("gpu", True)
         self.net_alias = None
         self.rates = sysinfo.Rates()
         self.peaks = {"disk": 100e6}
@@ -214,8 +215,10 @@ class Card(QWidget):
         if "pos" in self.cfg:
             self.move(*self.cfg["pos"])
 
-        self.gpu = sysinfo.GpuReader()
-        self.gpu.start()
+        self.gpu = None
+        self.m_gpu.setVisible(self.gpu_on)
+        if self.gpu_on:
+            self.start_gpu()
         psutil.cpu_percent()
         self.refresh_net_config()
         self.timer = QTimer(self, interval=1000, timeout=self.tick)
@@ -451,6 +454,10 @@ class Card(QWidget):
             act = idle.addAction(f"{pct}%", lambda p=pct: self.set_opacity(idle=p))
             act.setCheckable(True)
             act.setChecked(self.idle == pct)
+        show_gpu = menu.addAction("Show GPU (uses extra CPU and RAM)")
+        show_gpu.setCheckable(True)
+        show_gpu.setChecked(self.gpu_on)
+        show_gpu.triggered.connect(self.set_gpu)
         menu.addSeparator()
         if self.update_info:
             menu.addAction(f"Update to {self.update_info['tag']}…", self.prompt_update)
@@ -475,6 +482,21 @@ class Card(QWidget):
         self.panel_net.setVisible(self.net_open)
         self.panel_ping.setVisible(self.ping_open)
         self.adjustSize()
+
+    def start_gpu(self):
+        self.gpu = sysinfo.GpuReader()
+        self.gpu.start()
+
+    def set_gpu(self, on):
+        self.gpu_on = on
+        if on:
+            self.start_gpu()
+        elif self.gpu:
+            self.gpu.stop()
+            self.gpu = None
+        self.m_gpu.setVisible(on)
+        self.adjustSize()
+        self.save()
 
     def set_opacity(self, opacity=None, fade=None, idle=None):
         if opacity is not None:
@@ -556,21 +578,22 @@ class Card(QWidget):
     def save(self):
         self.cfg.update(mode=self.mode, pinned=self.pinned, pos=[self.x(), self.y()],
                         ping_target=self.f_target.text().strip() or "1.1.1.1",
-                        opacity=self.opacity, fade=self.fade, idle_opacity=self.idle)
+                        opacity=self.opacity, fade=self.fade, idle_opacity=self.idle, gpu=self.gpu_on)
         winutil.save_config(self.cfg)
 
     def quit(self):
         self.save()
         if self.ping_stop:
             self.ping_stop.set()
-        self.gpu.stop()
+        if self.gpu:
+            self.gpu.stop()
         QApplication.quit()
 
     # ---------- live stats ----------
     def tick(self):
         cpu = psutil.cpu_percent()
         ram = psutil.virtual_memory()
-        gpu = self.gpu.value
+        gpu = self.gpu.value if self.gpu else -1
         disk = psutil.disk_io_counters()
         nics = psutil.net_io_counters(pernic=True)
         net = nics.get(self.net_alias) or psutil.net_io_counters()
@@ -596,7 +619,7 @@ class Card(QWidget):
             sep = f"<span style='color:{LINE}'>&nbsp;│&nbsp;</span>"
             self.title.setText(sep.join([
                 item("CPU", BLUE,f"{cpu:.0f}%"),
-                item("GPU", PURPLE,gtxt),
+                *([item("GPU", PURPLE, gtxt)] if self.gpu_on else []),
                 item("RAM", GREEN,f"{ram.percent:.0f}%"),
                 item("↓", BLUE, f"{down:.0f}") + "&nbsp;" + item("↑", BLUE, f"{up:.0f}"),
                 item("R", AMBER, f"{rd / 1e6:.0f}") + "&nbsp;" + item("W", AMBER, f"{wr / 1e6:.0f}"),

@@ -23,7 +23,7 @@ Or double-click `run.bat`.
 
 - Drag anywhere to move. Double-click, or press the resize icon, to cycle full, compact and mini.
 - The pin icon toggles always on top. The grid icon opens a list to show the network settings and ping panels (full and compact sizes).
-- Right-click, or use the dots icon, for startup, opacity, fade when the cursor is away, and quit.
+- Right-click, or use the dots icon, for startup, opacity, fade when the cursor is away, the GPU on/off switch, and quit. Turning GPU off stops its background reader and saves roughly half of the widget's CPU and RAM.
 - Applying IP or DNS changes asks for admin approval through a UAC prompt. The widget itself never runs elevated.
 
 ## Publishing an update
