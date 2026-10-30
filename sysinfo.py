@@ -1,5 +1,6 @@
 """System data collectors: CPU/RAM/disk/network speeds, GPU load, adapter config, ping."""
 import json
+import os
 import re
 import subprocess
 import threading
@@ -22,11 +23,11 @@ class GpuReader(threading.Thread):
     """Persistent PowerShell loop reading Windows GPU engine counters (any vendor)."""
 
     SCRIPT = (
-        "while($true){try{"
+        "while($true){if(-not(Get-Process -Id __PID__ -ErrorAction SilentlyContinue)){exit};try{"
         "$s=(Get-Counter '\\GPU Engine(*)\\Utilization Percentage' -ErrorAction Stop).CounterSamples;"
         "$g=$s|Group-Object {$_.InstanceName -replace '^pid_\\d+_',''};"
         "$m=($g|ForEach-Object{($_.Group|Measure-Object CookedValue -Sum).Sum}|Measure-Object -Maximum).Maximum;"
-        "[int][math]::Min(100,$m)}catch{-1};Start-Sleep -Milliseconds 500}"
+        "[int][math]::Min(100,$m)}catch{-1};Start-Sleep -Milliseconds 1500}"
     )
 
     def __init__(self):
@@ -37,7 +38,8 @@ class GpuReader(threading.Thread):
     def run(self):
         try:
             self._proc = subprocess.Popen(
-                ["powershell", "-NoProfile", "-NonInteractive", "-Command", self.SCRIPT],
+                ["powershell", "-NoProfile", "-NonInteractive", "-Command",
+                 self.SCRIPT.replace("__PID__", str(os.getpid()))],
                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
                 creationflags=NO_WINDOW,
             )
