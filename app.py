@@ -300,6 +300,12 @@ class Card(QWidget):
         w, lay = self.panel()
         top = QHBoxLayout()
         top.addWidget(label("Speed test · Cloudflare", dim=True), 1)
+        self.b_cache = QPushButton("+ Cached")
+        self.b_cache.setCheckable(True)
+        self.b_cache.setChecked(self.cfg.get("speed_cache", True))
+        self.b_cache.setToolTip("Also download a CDN-cached file to compare with the pure download")
+        self.b_cache.toggled.connect(lambda _: self.save())
+        top.addWidget(self.b_cache)
         self.b_speed = QPushButton("Run test")
         self.b_speed.setProperty("primary", True)
         self.b_speed.clicked.connect(self.run_speed)
@@ -309,17 +315,18 @@ class Card(QWidget):
         lay.addWidget(self.gauge)
         row = QHBoxLayout()
         self.speed_vals = {}
-        for key, name in (("down", "Download"), ("up", "Upload"), ("ping", "Ping")):
+        for key, name in (("down", "Download"), ("up", "Upload"), ("cached", "Cached"), ("ping", "Ping")):
             col = QVBoxLayout()
             col.setSpacing(0)
             col.addWidget(label(name, dim=True))
             v = label("–")
-            v.setStyleSheet("font-size:18px; font-weight:500;")
+            v.setStyleSheet("font-size:15px; font-weight:500;")
             col.addWidget(v)
             self.speed_vals[key] = v
             row.addLayout(col)
         lay.addLayout(row)
-        self.l_speed_status = label("Uses about 70 MB of data per run.", dim=True)
+        self.l_speed_status = label("Uses about 70 MB per run, about 100 MB with the cached test.", dim=True)
+        self.l_speed_status.setWordWrap(True)
         lay.addWidget(self.l_speed_status)
         return w
 
@@ -633,7 +640,8 @@ class Card(QWidget):
                         ping_target=self.f_target.text().strip() or "1.1.1.1",
                         opacity=self.opacity, fade=self.fade, idle_opacity=self.idle, gpu=self.gpu_on,
                         theme=self.theme_name, accent=self.accent_name, show=self.show_cfg,
-                        alerts=self.alerts_on, monitor=self.monitor_on, hotkey=self.hotkey_on)
+                        alerts=self.alerts_on, monitor=self.monitor_on, hotkey=self.hotkey_on,
+                        speed_cache=self.b_cache.isChecked())
         winutil.save_config(self.cfg)
 
     def quit(self):
@@ -871,21 +879,23 @@ class Card(QWidget):
         for v in self.speed_vals.values():
             v.setText("–")
         self.gauge.reset()
+        with_cache = self.b_cache.isChecked()
 
         def work():
             try:
                 self.bridge.speed_done.emit(features.run_speedtest(self.bridge.speed_status.emit,
-                                                                   self.bridge.speed_live.emit))
+                                                                   self.bridge.speed_live.emit, with_cache))
             except (OSError, ValueError) as err:
                 self.bridge.speed_done.emit(f"Test failed. {err}")
         threading.Thread(target=work, daemon=True).start()
 
     def on_speed_live(self, phase, mbps):
-        names = {"ping": ("Ping", "ACCENT"), "down": ("Download", "ACCENT"), "up": ("Upload", "PURPLE")}
-        name, key = names[phase]
+        names = {"ping": ("Ping", "ACCENT", "ping"), "down": ("Download", "ACCENT", "down"),
+                 "up": ("Upload", "PURPLE", "up"), "cache": ("Cached download", "GREEN", "cached")}
+        name, key, tile = names[phase]
         self.gauge.set_value(mbps, name, key)
-        if phase in self.speed_vals and mbps:
-            self.speed_vals[phase].setText(f"{mbps:.0f} Mb/s")
+        if mbps:
+            self.speed_vals[tile].setText(f"{mbps:.0f} Mb/s" if tile != "ping" else f"{mbps:.0f} ms")
 
     def on_speed_done(self, result):
         self.speed_running = False
@@ -897,7 +907,13 @@ class Card(QWidget):
         self.speed_vals["up"].setText(f"{result['up']:.0f} Mb/s")
         self.speed_vals["ping"].setText(f"{result['ping']:.0f} ms" if result["ping"] is not None else "–")
         self.gauge.finish()
-        self.l_speed_status.setText("Done. Uses about 70 MB of data per run.")
+        if result["cached"] is not None:
+            self.speed_vals["cached"].setText(f"{result['cached']:.0f} Mb/s")
+            ratio = result["cached"] / result["down"] if result["down"] else 0
+            self.l_speed_status.setText(f"Cached is {ratio:.1f}× the pure download ({result['cache_note']}). "
+                                        "Upload can't be cached.")
+        else:
+            self.l_speed_status.setText("Done. Uses about 70 MB of data per run.")
 
     # ---------- IP / DNS settings ----------
     def load_form(self):

@@ -18,7 +18,7 @@ A small always-on-top Windows widget (Python + PySide6) showing live system stat
 - Network settings: switch the active adapter between DHCP and static IP, DNS presets (Cloudflare, Google, Auto, Custom), saved profiles
 - Ping with a live latency graph, average, max and loss
 - Connection history: a graph of the last hour of pings to 1.1.1.1
-- Speed test against Cloudflare with a live Speedtest-style gauge for download and upload (about 70 MB of data per run)
+- Speed test against Cloudflare with a live Speedtest-style gauge. Pure download and upload use bytes no cache can answer. An optional cached download fetches a CDN-cached file (jsDelivr) so you can compare the two (about 70 MB per run, about 100 MB with the cached test)
 
 **Alerts** (Windows notifications from a tray icon)
 - CPU or RAM above 90% for 30 seconds, a drive under 10% free, connection lost, packet loss, low battery

@@ -168,7 +168,7 @@ class Gauge(QWidget):
         p.setFont(QFont("Segoe UI", 8))
         p.setPen(QColor(P.DIM))
         caption = "Results below" if self.done else (f"{self.phase} · Mb/s" if self.phase else "Mb/s")
-        p.drawText(QRectF(cx - 60, cy + r * 0.32 + 26, 120, 14), Qt.AlignCenter, caption)
+        p.drawText(QRectF(cx - 90, cy + r * 0.32 + 26, 180, 14), Qt.AlignCenter, caption)
 
 
 class Metric(QWidget):
