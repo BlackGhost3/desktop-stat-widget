@@ -379,11 +379,14 @@ class Card(QWidget):
         self.btn_net.setVisible(full)
         self.btn_ping.setVisible(full)
         self.title.setTextFormat(Qt.RichText if mini else Qt.PlainText)
-        self.title.setStyleSheet("font-size:13px;" if mini else "font-weight:500; font-size:13px;")
+        self.title.setStyleSheet("font-size:12px;" if mini else "font-weight:500; font-size:13px;")
         if not mini:
             self.title.setText("System")
+            self.title.setToolTip("")
+        self.btn_menu.setVisible(not mini)
+        self.layout().setContentsMargins(*((10, 4, 6, 4) if mini else (12, 10, 12, 12)))
         self.body.setFixedWidth(330 if full else 270)
-        self.title.setMinimumWidth(0 if not mini else 560)
+        self.title.setMinimumWidth(0 if not mini else 330)
         self.adjustSize()
         self.save()
 
@@ -469,16 +472,16 @@ class Card(QWidget):
             gtxt = f"{gpu}%" if gpu >= 0 else "n/a"
 
             def item(name, color, value):
-                return (f"<span style='color:{color}'>●</span>&nbsp;<span style='color:{DIM}'>{name}</span>"
-                        f"&nbsp;<b>{value}</b>")
-            sep = f"<span style='color:{LINE}'>&nbsp;&nbsp;│&nbsp;&nbsp;</span>"
+                return f"<span style='color:{color}'>{name}</span>&nbsp;<b>{value}</b>"
+            sep = f"<span style='color:{LINE}'>&nbsp;│&nbsp;</span>"
             self.title.setText(sep.join([
-                item("CPU", BLUE, f"{cpu:.0f}%"),
-                item("GPU", PURPLE, gtxt),
-                item("RAM", GREEN, f"{ram.percent:.0f}%"),
-                item("NET", BLUE, f"↓{down:.0f} ↑{up:.0f} <span style='color:{DIM}'>Mb/s</span>"),
-                item("DISK", AMBER, f"R{rd / 1e6:.0f} W{wr / 1e6:.0f} <span style='color:{DIM}'>MB/s</span>"),
+                item("CPU", BLUE,f"{cpu:.0f}%"),
+                item("GPU", PURPLE,gtxt),
+                item("RAM", GREEN,f"{ram.percent:.0f}%"),
+                item("↓", BLUE, f"{down:.0f}") + "&nbsp;" + item("↑", BLUE, f"{up:.0f}"),
+                item("R", AMBER, f"{rd / 1e6:.0f}") + "&nbsp;" + item("W", AMBER, f"{wr / 1e6:.0f}"),
             ]))
+            self.title.setToolTip("CPU · GPU · RAM · network down/up Mb/s · disk read/write MB/s")
 
     def refresh_net_config(self):
         def work():
