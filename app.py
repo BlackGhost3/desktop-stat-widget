@@ -271,7 +271,7 @@ class Card(QWidget):
         self.panel_net = self.build_net_panel()
         self.panel_ping = self.build_ping_panel()
         for pnl in (self.panel_net, self.panel_ping):
-            pnl.setFixedWidth(330)
+            pnl.setMinimumWidth(330)
             pnl.hide()
             root.addWidget(pnl)
 
@@ -378,9 +378,8 @@ class Card(QWidget):
         for w in (self.spark_net, self.m_read, self.m_write):
             w.setVisible(full)
         self.l_disk.setVisible(mode == "compact")
-        self.btn_tools.setVisible(not mini)
-        self.panel_net.setVisible(self.net_open and not mini)
-        self.panel_ping.setVisible(self.ping_open and not mini)
+        self.panel_net.setVisible(self.net_open)
+        self.panel_ping.setVisible(self.ping_open)
         self.title.setTextFormat(Qt.RichText if mini else Qt.PlainText)
         self.title.setStyleSheet("font-size:12px;" if mini else "font-weight:500; font-size:13px;")
         if not mini:
