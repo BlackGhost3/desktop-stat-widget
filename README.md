@@ -1,80 +1,221 @@
-# Desktop stat widget
+<h1 align="center">Desktop Stat Widget</h1>
 
-A small always-on-top Windows widget (Python + PySide6) showing live system stats, with network tools built in.
+<p align="center">
+  A compact, always-on-top system and network monitor for Windows.<br>
+  Live CPU, GPU, RAM, disk and network stats, plus a built-in network toolbox.
+</p>
 
-![Full size](docs/full.png) ![Mini strip](docs/mini.png)
+<p align="center">
+  <a href="https://github.com/BlackGhost3/desktop-stat-widget/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/BlackGhost3/desktop-stat-widget?label=release&color=7f9cff"></a>
+  <img alt="Platform: Windows" src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-5fd8a6">
+  <img alt="Built with Python and PySide6" src="https://img.shields.io/badge/built%20with-Python%20%2B%20PySide6-b58cff">
+</p>
 
-## Features
+<p align="center">
+  <img src="docs/full.png" alt="Full size widget" width="330">
+  &nbsp;
+  <img src="docs/compact.png" alt="Compact widget" width="260">
+  &nbsp;
+  <img src="docs/vertical.png" alt="Vertical strip" width="58">
+</p>
+<p align="center">
+  <img src="docs/mini.png" alt="Mini strip" width="400">
+</p>
 
-**Monitoring**
-- CPU, GPU (any vendor, via Windows GPU counters) and RAM, with an optional GPU switch to save resources
-- Disk read/write speed, free space per drive, network up/down speed with a Wi-Fi or Ethernet label
-- Link speed: the negotiated Ethernet speed and duplex (amber at 100 Mb/s or less), or the live Wi-Fi rate, band, channel and signal strength
-- Local and public IP (public IP is looked up through api.ipify.org every 5 minutes). Click either to copy it
-- VPN badge when a VPN adapter (WireGuard, OpenVPN, Tailscale and similar) is up
-- Battery and power plan on laptops
-- Click CPU or RAM to see the top processes and end one
+<p align="center">
+  <b><a href="https://github.com/BlackGhost3/desktop-stat-widget/releases/latest">Download DesktopStatWidget.exe</a></b>
+  &nbsp;·&nbsp; no Python needed
+</p>
 
-**Network tools** (grid icon)
-- Network settings: switch the active adapter between DHCP and static IP, DNS presets (Cloudflare, Google, Auto, Custom), saved profiles
-- Ping with a live latency graph, average, max and loss
-- Connection history: a graph of the last hour of pings to 1.1.1.1
-- Local speed test: the widget serves a test page on your LAN and shows a QR code and link. Open it on a phone or another PC to measure the real speed between that device and this PC (download, upload, ping). While a device is testing, the panel shows a live gauge of the speed the PC actually measures (download, then upload). The panel's History button opens past results (up to 50, with date, device and IP) in their own window so the main widget stays small. Results show the device and its IP address; Android phones appear as "Android phone" because Chrome hides the model, and you can rename any device (remembered by IP). "New link" issues a fresh token and invalidates the old link and QR code. The server only runs while the panel is open, needs the random token in the link, and only accepts private network addresses. If a device can't connect, press "Allow in firewall" in the panel
-- Speed test against Cloudflare with a live Speedtest-style gauge. Pure download and upload use bytes no cache can answer. An optional cached download fetches a CDN-cached file (jsDelivr) so you can compare the two (about 70 MB per run, about 100 MB with the cached test)
+---
 
-**Alerts** (Windows notifications from a tray icon)
-- CPU or RAM above 90% for 30 seconds, a drive under 10% free, connection lost, packet loss, low battery
-- A saved network profile matches the network you're on (you review and apply it yourself)
+## Highlights
 
-**Appearance and behavior**
-- Three sizes: full, compact, mini strip
-- Dark, light or follow-Windows theme, five accent colors
-- Always-on-top toggle, opacity, fade when the cursor is away, snap to screen edges
-- Choose which stats are shown, including in the mini strip
-- Drag the mini strip to the left or right screen edge and it turns into a narrow vertical column (with optional thin bars for CPU, GPU and RAM; toggle under Show); drag it away and it goes back to the horizontal strip
-- Show or hide with Ctrl+Alt+W
-- Start with Windows
-- Update check and one-click install from GitHub releases
+- **Everything at a glance.** CPU, GPU, RAM, disk and network speed, IP addresses, link speed and VPN status in one small window that stays on top of your work.
+- **A network toolbox built in.** Switch between DHCP and a static IP, change DNS in one click, ping, run an internet speed test, and measure the real speed between your phone and your PC.
+- **Stays out of the way.** Three sizes, a vertical strip for screen edges, fading when your cursor is away, a global show/hide hotkey, and alerts that only speak up when something is wrong.
 
 ## Install
 
-**Download:** get `DesktopStatWidget.exe` from the [latest release](https://github.com/BlackGhost3/desktop-stat-widget/releases/latest) and run it. No Python needed. Windows SmartScreen may warn about an unrecognized app because the exe isn't code-signed; choose "More info", then "Run anyway". The exe updates itself from new releases.
+1. Download `DesktopStatWidget.exe` from the [latest release](https://github.com/BlackGhost3/desktop-stat-widget/releases/latest).
+2. Run it. There is no installer, and it needs no Python.
+3. To keep it running after a restart, right-click the widget and choose **Behavior, then Start with Windows**.
 
-**From source:**
+> Windows SmartScreen may warn about an unrecognized app because the exe isn't code-signed. Choose **More info**, then **Run anyway**. Each release lists the file's SHA-256 hash so you can verify the download.
+
+The packaged app updates itself from new releases (right-click, then **Check for updates**).
+
+**Requirements:** Windows 10 or 11 (developed and tested on Windows 10).
+
+## Quick start
+
+| To do this | Do this |
+| --- | --- |
+| Move the widget | Drag it anywhere. It snaps to screen edges and always stays fully on screen |
+| Change size | Double-click it, or press the resize icon: full, compact, mini |
+| Open a tool | Press the grid icon, then pick one panel |
+| Keep it on top | Press the pin icon |
+| Show or hide it | Press `Ctrl` + `Alt` + `W` from anywhere |
+| See the heaviest apps | Click the CPU or RAM row |
+| Copy an IP address | Click the local or public IP line |
+| Open every setting | Right-click the widget, or press the dots icon |
+
+## Features
+
+### Monitoring
+- CPU, RAM and GPU load. GPU works on any vendor through Windows GPU counters and can be switched off to save resources.
+- Disk read and write speed, and free space per drive (turns red under 10%).
+- Network download and upload speed with a live graph.
+- Link speed: the negotiated Ethernet speed and duplex, shown in amber at 100 Mb/s or less, or the live Wi-Fi rate, band, channel and signal strength.
+- Local and public IP addresses.
+- A VPN badge when a tunnel such as WireGuard, OpenVPN or Tailscale is up.
+- Battery level and power plan on laptops.
+- A top-processes list with an **End** button for each app (system processes are protected).
+
+### Network tools
+- **Network settings:** switch the active adapter between DHCP and a static IP with address validation, pick a DNS preset (Cloudflare, Google, Auto or Custom), and save profiles such as Home and Office. Changes need your approval through a Windows admin prompt; the widget itself never runs elevated.
+- **Ping:** any host, with a live latency graph, average, maximum and packet loss.
+- **Connection history:** a graph of the last hour of pings to 1.1.1.1.
+- **Internet speed test:** a Speedtest-style gauge for ping, download and upload against Cloudflare. An optional cached download fetches a CDN-cached file so you can compare it with the pure download.
+- **Local speed test:** measure the speed between a phone or another PC and this PC. See [below](#local-speed-test).
+
+### Alerts
+Windows notifications from a tray icon. Each alert has a cooldown so it doesn't repeat:
+
+- CPU or RAM above 90% for 30 seconds
+- A drive under 10% free
+- Connection lost, or heavy packet loss
+- Battery at 15% or lower and not charging
+- A saved network profile matches the network you just joined (you review and apply it yourself)
+
+### Appearance and behavior
+- Three sizes: full, compact and a single-line mini strip.
+- The mini strip becomes a narrow **vertical column** when you drag it to the left or right screen edge, with the buttons stacked and optional thin bars for CPU, GPU and RAM.
+- Dark, light or follow-Windows theme, with five accent colors.
+- Adjustable opacity and optional fading when the cursor is away.
+- Choose exactly which stats are shown, including in the mini strip.
+- Global hotkey, start with Windows, and one-click updates from GitHub releases.
+
+## A closer look
+
+<p align="center">
+  <img src="docs/network.png" alt="Network settings panel" width="300">
+  &nbsp;
+  <img src="docs/speed-test.png" alt="Internet speed test with gauge" width="300">
+  &nbsp;
+  <img src="docs/light-processes.png" alt="Light theme with top processes" width="300">
+</p>
+
+## Local speed test
+
+Measures the real speed between another device and your PC, for example to find weak Wi-Fi spots or check a cable. It tests your local network, not your internet connection.
+
+<p align="center">
+  <img src="docs/local-test.png" alt="Local speed test panel with QR code and results" width="300">
+</p>
+
+1. Open **Tools, then Local speed test** and press **Start**. The panel shows a link and a QR code.
+2. Scan the code with a phone, or open the link in a browser on another computer on the same network.
+3. The page measures ping, download and upload. The PC shows the same live gauge as the device.
+4. Both screens end on a clear "Test complete" summary. Results are saved with the device name, IP address and time. Open **History** for up to 50 past results in their own window.
+
+How it works and how it stays safe:
+
+- Each direction is counted by the side that **receives** the data, so the number is the real throughput: the phone measures download, the PC measures upload, and both screens show the same figures.
+- The server runs only while the panel is open, on a free port between 8765 and 8784.
+- The link contains a random token, and only private (local network) addresses are accepted. Press **New link** to issue a fresh token and invalidate the old link and QR code.
+- If a device can't connect, press **Allow in firewall**. It adds a rule for private networks only, after an admin prompt, and the button disappears once the rule exists.
+- Android phones appear as "Android phone" because Chrome hides the model. Press **Rename** to give any device a name (remembered by IP address).
+
+## Settings
+
+Right-click the widget, or use the dots icon.
+
+| Menu | Options |
+| --- | --- |
+| **Appearance** | Theme (auto, dark, light), accent color, opacity (100, 85, 70%), fade when the cursor is away (on by default), faded opacity (30, 50, 70%) |
+| **Show** | CPU, RAM, network speed, disk speed, local IP and DNS, public IP, free disk space, GPU, bars in the vertical strip |
+| **Behavior** | Start with Windows, alerts, connection monitor, the `Ctrl+Alt+W` hotkey |
+| *Bottom of the menu* | Check for updates, current version, quit |
+
+Settings and saved profiles live in `%APPDATA%\StatWidget\config.json`. Delete that file to reset everything.
+
+## Privacy and network requests
+
+Everything runs on your PC. These are the only outside connections the widget makes:
+
+| Service | Used for | When |
+| --- | --- | --- |
+| `api.ipify.org` (fallback `ifconfig.me`) | Showing your public IP | At launch, then every 5 minutes |
+| Ping to `1.1.1.1` | Connection history and alerts | Every 5 seconds. Can be turned off under Behavior |
+| GitHub | Checking for and downloading updates | At launch and when you check |
+| Cloudflare, and jsDelivr for the cached test | Internet speed test | Only when you press Run test |
+
+There is no telemetry, and no account is needed.
+
+## Build from source
 
 ```bash
 pip install -r requirements.txt
 python app.py
 ```
 
-Or double-click `run.bat`.
+You can also double-click `run.bat`.
 
-**Build the exe yourself:** `pip install pyinstaller`, then run `build.bat`. The result is `dist\DesktopStatWidget.exe`.
-
-## Use
-
-- Drag anywhere to move. Double-click, or press the resize icon, to cycle full, compact and mini.
-- The pin icon toggles always on top. The grid icon opens the tools list, one panel at a time.
-- Right-click, or use the dots icon, for Appearance, Show, Behavior, updates and quit.
-- Applying IP or DNS changes asks for admin approval through a UAC prompt. The widget itself never runs elevated.
-
-Settings and profiles are stored in `%APPDATA%\StatWidget\config.json`.
-
-![Network settings](docs/network.png) ![Light theme with processes](docs/light-processes.png)
-
-## Publishing an update
-
-Bump `VERSION` in `updater.py`, push, run `build.bat`, then create a release whose tag is the new version and attach the exe:
+To build the exe:
 
 ```bash
-gh release create v1.3.0 dist\DesktopStatWidget.exe --title "v1.3.0" --notes "What changed"
+pip install pyinstaller
+build.bat
 ```
 
-The widget checks on launch and from the menu. The packaged exe downloads the new `DesktopStatWidget.exe` from the release, swaps itself, and restarts. A copy run from source downloads the release source and replaces the `.py`, `.txt`, `.bat` and `.md` files. A git checkout is never overwritten; the widget opens the release page instead.
+The result is `dist\DesktopStatWidget.exe`, a single file with no console window.
 
-## Notes
+### Publishing a release
 
-- Windows 10/11 only. Temperatures aren't shown because Windows has no built-in API for them.
-- IP/DNS detection and changes use PowerShell and `netsh`.
-- Outside requests: api.ipify.org (public IP), ping to 1.1.1.1 (connection monitor, can be turned off), GitHub (updates), Cloudflare (speed test, only when you run it).
+1. Bump `VERSION` in `updater.py` and push.
+2. Run `build.bat`.
+3. Create a release whose tag matches the new version and attach the exe:
+
+   ```bash
+   gh release create v1.3.2 dist\DesktopStatWidget.exe --title "v1.3.2" --notes "What changed"
+   ```
+
+The packaged exe downloads the new `DesktopStatWidget.exe` from the release, swaps itself in and restarts. A copy run from source downloads the release source and replaces its `.py`, `.txt`, `.bat` and `.md` files. A git checkout is never overwritten; the widget opens the release page instead.
+
+### Project layout
+
+| File | Purpose |
+| --- | --- |
+| `app.py` | The main window, menus, panels and event handling |
+| `widgets.py` | Custom-drawn widgets: bars, graphs, the speed gauge, the vertical strip, the QR view |
+| `theme.py` | Dark and light palettes, accent colors and the stylesheet |
+| `sysinfo.py` | Readers for GPU load, adapter configuration, Wi-Fi details, public IP and ping |
+| `features.py` | Internet speed test, top processes, connection monitor, alert rules, power plan |
+| `localtest.py` | The local speed test server and its browser page |
+| `history.py` | The local speed test history window |
+| `winutil.py` | Startup entry, elevated commands and the settings file |
+| `updater.py` | Checking for and installing updates |
+| `hotkey.py` | The global show/hide hotkey |
+| `tools/`, `assets/` | Icon generator and the generated icon |
+| `build.bat`, `run.bat` | Build the exe, run from source |
+
+## Troubleshooting
+
+**Windows says the app is unrecognized, or antivirus flags it.** The exe isn't code-signed, and one-file apps made with PyInstaller are sometimes flagged. Check the SHA-256 hash on the release page, or build it yourself from source.
+
+**A phone can't open the local speed test link.** Make sure both devices are on the same network, and not a guest network that isolates devices. Press **Allow in firewall** in the panel. The rule covers private networks only, so if Windows labels your network "Public", change it to "Private".
+
+**Ethernet shows 100 Mb/s in amber on a gigabit port.** The cable, a connector or the port at the other end negotiated a slower speed. Try another cable or port.
+
+**GPU shows "n/a".** The widget reads Windows GPU counters, which need a recent graphics driver. You can switch GPU off under **Show**.
+
+**The hotkey does nothing.** Another app already uses `Ctrl+Alt+W`. Turn the hotkey off under **Behavior** and use the tray icon to show or hide the widget.
+
+**An update installed but the app didn't restart.** Versions before 1.3.1 had a restart bug. Start the app again manually; updates from 1.3.1 onward restart on their own.
+
+## Limitations
+
+- Windows only. Temperatures aren't shown because Windows has no built-in API for them.
+- IP and DNS detection and changes use PowerShell and `netsh`, so some details may differ on non-English Windows.
 - The screenshots use placeholder IP addresses.

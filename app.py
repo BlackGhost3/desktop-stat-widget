@@ -518,9 +518,13 @@ class Card(QWidget):
 
     def apply_orientation(self):
         mini, vertical = self.mode == "mini", self.vertical
+        # The minimum width must change before the text does: a label caches its size hint from the text,
+        # and measuring it while the old 330 px minimum still applied left the widget too wide after the mini strip.
+        self.title.setMinimumWidth(330 if mini and not vertical else 0)
         self.title.setTextFormat(Qt.RichText if mini else Qt.PlainText)
         self.title.setStyleSheet("font-size:12px;" if mini else "font-weight:500; font-size:13px;")
         if not mini:
+            self.title.clear()
             self.title.setText("System")
             self.setToolTip("")
         self.title.setVisible(not vertical)
@@ -532,7 +536,6 @@ class Card(QWidget):
             self.head.setAlignment(b, Qt.AlignLeft)
         margins = (1, 6, 1, 8) if vertical else ((10, 4, 6, 4) if mini else (12, 10, 12, 12))
         self.layout().setContentsMargins(*margins)
-        self.title.setMinimumWidth(330 if mini and not vertical else 0)
         self.apply_visibility()
         self.place_on_edge()
 
