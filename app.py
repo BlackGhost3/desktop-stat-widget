@@ -23,7 +23,7 @@ import theme
 import updater
 import winutil
 from theme import P
-from widgets import Bar, IconBtn, Metric, Spark, label
+from widgets import Bar, Gauge, IconBtn, Metric, Spark, label
 
 DNS_PRESETS = {"cloudflare": ["1.1.1.1", "1.0.0.1"], "google": ["8.8.8.8", "8.8.4.4"]}
 MODES = ["full", "compact", "mini"]
@@ -41,6 +41,7 @@ class Bridge(QObject):
     update_checked = Signal(object, bool)  # release dict or error string, user-initiated
     update_installed = Signal(object)  # error string or None
     speed_status = Signal(str)
+    speed_live = Signal(str, float)  # phase, current Mb/s
     speed_done = Signal(object)  # result dict or error string
 
 
@@ -89,6 +90,7 @@ class Card(QWidget):
         self.bridge.update_checked.connect(self.on_update_checked)
         self.bridge.update_installed.connect(self.on_update_installed)
         self.bridge.speed_status.connect(lambda t: self.l_speed_status.setText(t))
+        self.bridge.speed_live.connect(self.on_speed_live)
         self.bridge.speed_done.connect(self.on_speed_done)
 
         self.setAttribute(Qt.WA_TranslucentBackground)
@@ -303,6 +305,8 @@ class Card(QWidget):
         self.b_speed.clicked.connect(self.run_speed)
         top.addWidget(self.b_speed)
         lay.addLayout(top)
+        self.gauge = Gauge()
+        lay.addWidget(self.gauge)
         row = QHBoxLayout()
         self.speed_vals = {}
         for key, name in (("down", "Download"), ("up", "Upload"), ("ping", "Ping")):
@@ -866,13 +870,22 @@ class Card(QWidget):
         self.b_speed.setText("Running…")
         for v in self.speed_vals.values():
             v.setText("–")
+        self.gauge.reset()
 
         def work():
             try:
-                self.bridge.speed_done.emit(features.run_speedtest(self.bridge.speed_status.emit))
+                self.bridge.speed_done.emit(features.run_speedtest(self.bridge.speed_status.emit,
+                                                                   self.bridge.speed_live.emit))
             except (OSError, ValueError) as err:
                 self.bridge.speed_done.emit(f"Test failed. {err}")
         threading.Thread(target=work, daemon=True).start()
+
+    def on_speed_live(self, phase, mbps):
+        names = {"ping": ("Ping", "ACCENT"), "down": ("Download", "ACCENT"), "up": ("Upload", "PURPLE")}
+        name, key = names[phase]
+        self.gauge.set_value(mbps, name, key)
+        if phase in self.speed_vals and mbps:
+            self.speed_vals[phase].setText(f"{mbps:.0f} Mb/s")
 
     def on_speed_done(self, result):
         self.speed_running = False

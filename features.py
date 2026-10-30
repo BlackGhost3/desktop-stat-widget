@@ -1,7 +1,9 @@
 """Background helpers: speed test, top processes, connection monitor, alert rules, power info."""
+import http.client
 import subprocess
 import threading
 import time
+import urllib.parse
 import urllib.request
 from collections import deque
 
@@ -16,9 +18,10 @@ PROTECTED = {"system", "registry", "smss.exe", "csrss.exe", "wininit.exe", "winl
              "lsass.exe", "svchost.exe", "dwm.exe", "explorer.exe", "fontdrvhost.exe", "memcompression"}
 
 
-def run_speedtest(status):
-    """Blocking test against Cloudflare. status(text) is called with progress. Returns dict."""
+def run_speedtest(status, live):
+    """Blocking test against Cloudflare. status(text) reports the stage, live(phase, mbps) the running speed."""
     status("Measuring ping…")
+    live("ping", 0)
     ping = sysinfo.ping_once("1.1.1.1")
     status("Testing download…")
     start, got, last = time.time(), 0, 0.0
@@ -28,17 +31,33 @@ def run_speedtest(status):
             if not chunk:
                 break
             got += len(chunk)
-            if time.time() - last > 0.3:
+            if time.time() - last > 0.15 and time.time() - start > 0.4:
                 last = time.time()
-                status(f"Download {got * 8 / (last - start) / 1e6:.0f} Mb/s")
+                live("down", got * 8 / (last - start) / 1e6)
     down = got * 8 / max(time.time() - start, 0.001) / 1e6
+    live("down", down)
     status("Testing upload…")
-    data = bytes(6_000_000)
-    req = urllib.request.Request(UP_URL, data=data, method="POST",
-                                 headers={**UA, "Content-Type": "application/octet-stream"})
-    t0 = time.time()
-    urllib.request.urlopen(req, timeout=30).read()
-    up = len(data) * 8 / max(time.time() - t0, 0.001) / 1e6
+    total, chunk = 6_000_000, bytes(65536)
+    conn = http.client.HTTPSConnection(urllib.parse.urlparse(UP_URL).netloc, timeout=30)
+    try:
+        conn.putrequest("POST", "/__up")
+        conn.putheader("User-Agent", UA["User-Agent"])
+        conn.putheader("Content-Type", "application/octet-stream")
+        conn.putheader("Content-Length", str(total))
+        conn.endheaders()
+        t0, sent, last = time.time(), 0, 0.0
+        while sent < total:
+            piece = chunk[:min(len(chunk), total - sent)]
+            conn.send(piece)
+            sent += len(piece)
+            if time.time() - last > 0.15 and time.time() - t0 > 0.4:
+                last = time.time()
+                live("up", sent * 8 / (last - t0) / 1e6)
+        conn.getresponse().read()
+        up = total * 8 / max(time.time() - t0, 0.001) / 1e6
+    finally:
+        conn.close()
+    live("up", up)
     return {"ping": ping, "down": down, "up": up}
 
 

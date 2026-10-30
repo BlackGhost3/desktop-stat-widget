@@ -1,8 +1,9 @@
 """Small custom-painted widgets. Colors are read from the theme at paint time."""
+import math
 from collections import deque
 
-from PySide6.QtCore import QPointF, QRectF, Qt
-from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen
+from PySide6.QtCore import QPointF, QRectF, Qt, QTimer
+from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QToolButton, QWidget
 
 from theme import P
@@ -75,6 +76,90 @@ class Spark(QWidget):
                 started = True
         p.setPen(QPen(QColor(getattr(P, self.key)), 1.5))
         p.drawPath(path)
+
+
+class Gauge(QWidget):
+    """Speedtest-style 270 degree dial with a non-linear scale, a needle and an eased value."""
+
+    MARKS = (0, 5, 10, 50, 100, 250, 500, 750, 1000)
+    START, SWEEP = 225.0, 270.0
+
+    def __init__(self, height=170):
+        super().__init__()
+        self.setFixedHeight(height)
+        self.shown = self.target = 0.0
+        self.phase, self.key = "", "ACCENT"
+        self.timer = QTimer(self, interval=25, timeout=self.ease)
+
+    def frac(self, v):
+        v = max(0.0, min(self.MARKS[-1], v))
+        for i in range(len(self.MARKS) - 1):
+            lo, hi = self.MARKS[i], self.MARKS[i + 1]
+            if v <= hi:
+                return (i + (v - lo) / (hi - lo)) / (len(self.MARKS) - 1)
+        return 1.0
+
+    def set_value(self, mbps, phase=None, key=None):
+        self.target = mbps
+        if phase is not None:
+            self.phase = phase
+        if key:
+            self.key = key
+        if not self.timer.isActive():
+            self.timer.start()
+
+    def reset(self):
+        self.shown = self.target = 0.0
+        self.phase = ""
+        self.update()
+
+    def ease(self):
+        self.shown += (self.target - self.shown) * 0.25
+        if abs(self.target - self.shown) < 0.05:
+            self.shown = self.target
+            self.timer.stop()
+        self.update()
+
+    def point(self, f, radius, cx, cy):
+        ang = math.radians(self.START - self.SWEEP * f)
+        return QPointF(cx + radius * math.cos(ang), cy - radius * math.sin(ang))
+
+    def paintEvent(self, _):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        cx, cy = self.width() / 2, self.height() / 2 + 2
+        r = min(self.width(), self.height()) / 2 - 14
+        box = QRectF(cx - r, cy - r, 2 * r, 2 * r)
+        pen = QPen(QColor(P.LINE), 9)
+        pen.setCapStyle(Qt.RoundCap)
+        p.setPen(pen)
+        p.drawArc(box, int(self.START * 16), int(-self.SWEEP * 16))
+        f = self.frac(self.shown)
+        color = QColor(getattr(P, self.key))
+        if f > 0:
+            pen.setColor(color)
+            p.setPen(pen)
+            p.drawArc(box, int(self.START * 16), int(-self.SWEEP * f * 16))
+        font = QFont("Segoe UI", 7)
+        p.setFont(font)
+        p.setPen(QColor(P.DIM))
+        for i, mark in enumerate(self.MARKS):
+            pt = self.point(i / (len(self.MARKS) - 1), r - 19, cx, cy)
+            p.drawText(QRectF(pt.x() - 16, pt.y() - 7, 32, 14), Qt.AlignCenter, str(mark))
+        tip = self.point(f, r - 28, cx, cy)
+        p.setPen(QPen(QColor(P.TEXT), 2, Qt.SolidLine, Qt.RoundCap))
+        p.drawLine(QPointF(cx, cy), tip)
+        p.setBrush(QColor(P.TEXT))
+        p.drawEllipse(QPointF(cx, cy), 4, 4)
+        p.setPen(QColor(P.TEXT))
+        big = QFont("Segoe UI", 17)
+        big.setWeight(QFont.Medium)
+        p.setFont(big)
+        p.drawText(QRectF(cx - 60, cy + r * 0.32, 120, 28), Qt.AlignCenter, f"{self.shown:.1f}" if self.shown < 100 else f"{self.shown:.0f}")
+        p.setFont(QFont("Segoe UI", 8))
+        p.setPen(QColor(P.DIM))
+        p.drawText(QRectF(cx - 60, cy + r * 0.32 + 26, 120, 14), Qt.AlignCenter,
+                   f"{self.phase} · Mb/s" if self.phase else "Mb/s")
 
 
 class Metric(QWidget):
