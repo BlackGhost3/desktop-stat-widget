@@ -20,9 +20,9 @@ def label(text="", dim=False, mono=False, align=None):
 
 
 class Bar(QWidget):
-    def __init__(self, key):
+    def __init__(self, key, track="LINE"):
         super().__init__()
-        self.key, self.v = key, 0.0
+        self.key, self.track, self.v = key, track, 0.0
         self.setFixedHeight(6)
 
     def set(self, v):
@@ -33,7 +33,7 @@ class Bar(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         p.setPen(Qt.NoPen)
-        p.setBrush(QColor(P.LINE))
+        p.setBrush(QColor(getattr(P, self.track)))
         p.drawRoundedRect(self.rect(), 3, 3)
         p.setBrush(QColor(getattr(P, self.key)))
         p.drawRoundedRect(QRectF(0, 0, self.width() * self.v, self.height()), 3, 3)
@@ -228,7 +228,7 @@ class VStrip(QWidget):
     ROWS = (("cpu", "CPU", "ACCENT", True), ("gpu", "GPU", "PURPLE", True), ("ram", "RAM", "GREEN", True),
             ("down", "Down", "ACCENT", False), ("up", "Up", "ACCENT", False),
             ("read", "Read", "AMBER", False), ("write", "Write", "AMBER", False))
-    WIDTH = 76
+    WIDTH = 90  # fills the window; the text is padded in, the bars run the full width
 
     def __init__(self):
         super().__init__()
@@ -243,18 +243,18 @@ class VStrip(QWidget):
             bl.setContentsMargins(0, 0, 0, 0)
             bl.setSpacing(1)
             k, v = label(""), label("")
-            k.setStyleSheet("font-size:11px;")
-            v.setStyleSheet("font-size:15px; font-weight:500;")
+            k.setStyleSheet("font-size:11px; padding-left:7px;")
+            v.setStyleSheet("font-size:15px; font-weight:500; padding-left:7px;")
             bl.addWidget(k)
             bl.addWidget(v)
-            bar = Bar(color) if has_bar else None
+            bar = Bar(color, track="HOVER") if has_bar else None
             if bar:
                 bar.setFixedHeight(4)
                 bl.addWidget(bar)
             lay.addWidget(box)
             self.rows[key] = (box, k, v, bar, name, color)
         self.vpn = label("")
-        self.vpn.setStyleSheet("font-size:11px; font-weight:500;")
+        self.vpn.setStyleSheet("font-size:11px; font-weight:500; padding-left:7px;")
         lay.addWidget(self.vpn)
 
     def set_row(self, key, value_html, frac=None, visible=True, bars=True):

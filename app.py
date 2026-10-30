@@ -526,10 +526,11 @@ class Card(QWidget):
         self.title.setVisible(not vertical)
         self.btn_menu.setVisible(not mini)
         self.head.setDirection(QBoxLayout.TopToBottom if vertical else QBoxLayout.LeftToRight)
+        self.head.setContentsMargins(*((5, 0, 0, 0) if vertical else (0, 0, 0, 0)))  # buttons line up with the text
         for b in (self.btn_tools, self.btn_mode, self.btn_pin):
             b.resize_to(24 if vertical else 26)
-            self.head.setAlignment(b, Qt.AlignHCenter if vertical else Qt.AlignLeft)
-        margins = (8, 8, 8, 10) if vertical else ((10, 4, 6, 4) if mini else (12, 10, 12, 12))
+            self.head.setAlignment(b, Qt.AlignLeft)
+        margins = (1, 8, 1, 10) if vertical else ((10, 4, 6, 4) if mini else (12, 10, 12, 12))
         self.layout().setContentsMargins(*margins)
         self.title.setMinimumWidth(330 if mini and not vertical else 0)
         self.apply_visibility()
