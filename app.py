@@ -1,8 +1,10 @@
 """Desktop stat widget: CPU / GPU / RAM, disk and network speed, IP + DNS tools, ping."""
 import ipaddress
+import subprocess
 import sys
 import threading
 import time
+import webbrowser
 from collections import deque
 
 import psutil
@@ -14,6 +16,7 @@ from PySide6.QtWidgets import (
 )
 
 import sysinfo
+import updater
 import winutil
 
 BG, PANEL, LINE = "#14151a", "#1c1e25", "#2a2c35"
@@ -175,6 +178,8 @@ class IconBtn(QToolButton):
 class PingBridge(QObject):
     result = Signal(object)
     netdone = Signal()
+    update_checked = Signal(object, bool)  # release dict or error string, user-initiated
+    update_installed = Signal(object)  # error string or None
 
 
 class Card(QWidget):
@@ -197,6 +202,9 @@ class Card(QWidget):
         self.bridge = PingBridge()
         self.bridge.result.connect(self.on_ping)
         self.bridge.netdone.connect(self.show_net_config)
+        self.bridge.update_checked.connect(self.on_update_checked)
+        self.bridge.update_installed.connect(self.on_update_installed)
+        self.update_info = None
 
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setStyleSheet(STYLE)
@@ -213,6 +221,7 @@ class Card(QWidget):
         self.timer.start()
         QTimer(self, interval=15000, timeout=self.refresh_net_config).start()
         QTimer(self, interval=120, timeout=self.hover_check).start()
+        QTimer.singleShot(8000, lambda: self.check_updates(manual=False))
         self.set_mode(self.mode)
 
     # ---------- layout ----------
@@ -438,6 +447,12 @@ class Card(QWidget):
             act.setCheckable(True)
             act.setChecked(self.idle == pct)
         menu.addSeparator()
+        if self.update_info:
+            menu.addAction(f"Update to {self.update_info['tag']}…", self.prompt_update)
+        else:
+            menu.addAction("Check for updates", lambda: self.check_updates(manual=True))
+        menu.addAction(f"Version {updater.VERSION}").setEnabled(False)
+        menu.addSeparator()
         menu.addAction("Quit", self.quit)
         menu.exec(pos)
 
@@ -473,6 +488,59 @@ class Card(QWidget):
         pct = self.opacity if (under or not self.fade) else min(self.opacity, self.idle)
         if force or abs(self.windowOpacity() - pct / 100) > 0.01:
             self.setWindowOpacity(pct / 100)
+
+    def check_updates(self, manual):
+        def work():
+            try:
+                self.bridge.update_checked.emit(updater.latest_release(), manual)
+            except (updater.UpdateError, ValueError) as err:
+                self.bridge.update_checked.emit(str(err) or "Couldn't read the release info.", manual)
+        threading.Thread(target=work, daemon=True).start()
+
+    def on_update_checked(self, result, manual):
+        if isinstance(result, str):  # error
+            if manual:
+                QMessageBox.information(self, "Updates", result)
+            return
+        if updater.is_newer(result["tag"]):
+            self.update_info = result
+            if manual:
+                self.prompt_update()
+        else:
+            self.update_info = None
+            if manual:
+                QMessageBox.information(self, "Updates", f"You're up to date (version {updater.VERSION}).")
+
+    def prompt_update(self):
+        info = self.update_info
+        if not info:
+            return
+        if updater.in_git_checkout():
+            if QMessageBox.question(self, "Update available", f"{info['tag']} is available. This copy is a git "
+                                    "checkout, so update it with git pull. Open the release page?") == QMessageBox.Yes:
+                webbrowser.open(info["page"])
+            return
+        notes = info["notes"].strip()[:400]
+        box = QMessageBox.question(self, "Update available", f"Version {info['tag']} is available "
+                                   f"(you have {updater.VERSION}).\n\n{notes}\n\nInstall it and restart?")
+        if box != QMessageBox.Yes:
+            return
+
+        def work():
+            try:
+                updater.install(info["zip"])
+                self.bridge.update_installed.emit(None)
+            except (updater.UpdateError, OSError) as err:
+                self.bridge.update_installed.emit(str(err))
+        threading.Thread(target=work, daemon=True).start()
+
+    def on_update_installed(self, err):
+        if err:
+            QMessageBox.warning(self, "Updates", f"Update failed. {err}")
+            return
+        self.save()
+        subprocess.Popen([sys.executable, os.path.join(updater.APP_DIR, "app.py")], cwd=updater.APP_DIR)
+        self.quit()
 
     def toggle_startup(self, on):
         try:
