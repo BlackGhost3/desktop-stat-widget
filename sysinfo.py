@@ -96,6 +96,20 @@ def link_kind(cfg):
     return "Wi-Fi" if ("802.11" in text or "wi-fi" in text or "wireless" in text) else "Ethernet"
 
 
+def public_ip():
+    """Looks up the public IP address, or returns None if offline."""
+    import ipaddress
+    import urllib.request
+    for url in ("https://api.ipify.org", "https://ifconfig.me/ip"):
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "desktop-stat-widget"})
+            with urllib.request.urlopen(req, timeout=6) as resp:
+                return str(ipaddress.ip_address(resp.read().decode().strip()))
+        except (OSError, ValueError):
+            continue
+    return None
+
+
 def ping_once(target, timeout_ms=1000):
     """Returns latency in ms, or None on timeout/failure."""
     try:

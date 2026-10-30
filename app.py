@@ -205,6 +205,7 @@ class Card(QWidget):
         self.bridge.update_checked.connect(self.on_update_checked)
         self.bridge.update_installed.connect(self.on_update_installed)
         self.update_info = None
+        self.public_ip = None
 
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setStyleSheet(STYLE)
@@ -222,6 +223,8 @@ class Card(QWidget):
         QTimer(self, interval=15000, timeout=self.refresh_net_config).start()
         QTimer(self, interval=120, timeout=self.hover_check).start()
         QTimer.singleShot(8000, lambda: self.check_updates(manual=False))
+        self.refresh_public_ip()
+        QTimer(self, interval=300000, timeout=self.refresh_public_ip).start()
         self.set_mode(self.mode)
 
     # ---------- layout ----------
@@ -275,6 +278,8 @@ class Card(QWidget):
         bl.addWidget(self.l_disk)
         self.l_ip = label("", mono=True)
         bl.addWidget(self.l_ip)
+        self.l_pub = label("Public –", mono=True)
+        bl.addWidget(self.l_pub)
         root.addWidget(self.body)
 
         self.panel_net = self.build_net_panel()
@@ -581,6 +586,7 @@ class Card(QWidget):
         self.l_speed.setText(f"↓ {down:.1f}  ↑ {up:.1f} Mb/s")
         self.spark_net.push(down)
         self.l_disk.setText(f"R {rd / 1e6:.0f} · W {wr / 1e6:.0f} MB/s")
+        self.l_pub.setText(f"Public {self.public_ip or '–'}")
 
         if self.mode == "mini":
             gtxt = f"{gpu}%" if gpu >= 0 else "n/a"
@@ -596,6 +602,11 @@ class Card(QWidget):
                 item("R", AMBER, f"{rd / 1e6:.0f}") + "&nbsp;" + item("W", AMBER, f"{wr / 1e6:.0f}"),
             ]))
             self.setToolTip("CPU · GPU · RAM · network down/up Mb/s · disk read/write MB/s")
+
+    def refresh_public_ip(self):
+        def work():
+            self.public_ip = sysinfo.public_ip()
+        threading.Thread(target=work, daemon=True).start()
 
     def refresh_net_config(self):
         def work():
@@ -687,6 +698,7 @@ class Card(QWidget):
             return
         if winutil.run_elevated(cmds):
             QTimer.singleShot(6000, self.refresh_net_config)
+            QTimer.singleShot(8000, self.refresh_public_ip)
         else:
             QMessageBox.warning(self, "Network", "Admin approval was declined, so nothing changed.")
 

@@ -3,7 +3,7 @@
 A small always-on-top Windows widget (Python + PySide6) showing live system stats and network tools.
 
 - CPU, GPU (any vendor, via Windows GPU counters) and RAM
-- Disk read/write speed, network up/down speed with Wi-Fi or Ethernet label
+- Disk read/write speed, network up/down speed with Wi-Fi or Ethernet label, local and public IP (public IP is looked up through api.ipify.org every 5 minutes)
 - Switch the active adapter between DHCP and static IP, plus DNS presets (Cloudflare, Google, Auto, Custom) and saved profiles
 - Ping tool with live latency graph, average, max and loss
 - Three sizes (full, compact, mini), always-on-top toggle, adjustable opacity with optional fade when the cursor is away
