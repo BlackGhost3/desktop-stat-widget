@@ -171,6 +171,35 @@ class Gauge(QWidget):
         p.drawText(QRectF(cx - 90, cy + r * 0.32 + 26, 180, 14), Qt.AlignCenter, caption)
 
 
+class QrView(QWidget):
+    """Draws a QR code (always dark on white so phones can scan it in any theme)."""
+
+    def __init__(self, size=150):
+        super().__init__()
+        self.rows = []
+        self.setFixedSize(size, size)
+
+    def set_data(self, text):
+        import segno
+        self.rows = [list(r) for r in segno.make(text, error="m").matrix]
+        self.update()
+
+    def paintEvent(self, _):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing, False)
+        p.fillRect(self.rect(), QColor("#ffffff"))
+        n = len(self.rows)
+        if not n:
+            return
+        cell = (self.width() - 16) / n
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor("#14151a"))
+        for y, row in enumerate(self.rows):
+            for x, bit in enumerate(row):
+                if bit:
+                    p.drawRect(QRectF(8 + x * cell, 8 + y * cell, cell + 0.5, cell + 0.5))
+
+
 class Metric(QWidget):
     def __init__(self, name, key):
         super().__init__()

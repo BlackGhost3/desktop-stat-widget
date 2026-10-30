@@ -83,7 +83,7 @@ $dhcp = (Get-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4).Dhcp
 $dns = (Get-DnsClientServerAddress -InterfaceIndex $i -AddressFamily IPv4).ServerAddresses
 $a = Get-NetAdapter -InterfaceIndex $i
 $vpn = Get-NetAdapter -ErrorAction SilentlyContinue | Where-Object { $_.Status -eq 'Up' -and $_.InterfaceDescription -match 'WireGuard|Wintun|TAP-Windows|OpenVPN|VPN|Tailscale|ZeroTier|NordLynx|Proton' } | Select-Object -First 1 -ExpandProperty Name
-[pscustomobject]@{alias=$a.Name; media=[string]$a.PhysicalMediaType; ip=$ip.IPAddress; prefix=$ip.PrefixLength; gateway=$r.NextHop; dhcp=("$dhcp" -eq 'Enabled'); dns=@($dns); vpn=[string]$vpn} | ConvertTo-Json -Compress
+[pscustomobject]@{alias=$a.Name; media=[string]$a.PhysicalMediaType; speed=[string]$a.Speed; duplex=[bool]$a.FullDuplex; ip=$ip.IPAddress; prefix=$ip.PrefixLength; gateway=$r.NextHop; dhcp=("$dhcp" -eq 'Enabled'); dns=@($dns); vpn=[string]$vpn} | ConvertTo-Json -Compress
 """
 
 
@@ -97,6 +97,34 @@ def read_net_config():
 def link_kind(cfg):
     text = f"{cfg.get('media', '')} {cfg.get('alias', '')}".lower()
     return "Wi-Fi" if ("802.11" in text or "wi-fi" in text or "wireless" in text) else "Ethernet"
+
+
+def fmt_speed(bps):
+    """Formats a link speed in bits per second, e.g. 1 Gb/s or 866 Mb/s."""
+    return f"{bps / 1e9:g} Gb/s" if bps >= 1e9 else f"{bps / 1e6:g} Mb/s"
+
+
+def wifi_info():
+    """Current Wi-Fi link details from `netsh wlan show interfaces`, or {} when not connected."""
+    try:
+        out = subprocess.run(["netsh", "wlan", "show", "interfaces"], capture_output=True, text=True, timeout=6,
+                             creationflags=NO_WINDOW).stdout
+    except (subprocess.SubprocessError, OSError):
+        return {}
+    info = {}
+    for line in out.splitlines():
+        if ":" in line:
+            key, value = line.split(":", 1)
+            info.setdefault(key.strip().lower(), value.strip())
+    if info.get("state", "").lower() != "connected":
+        return {}
+
+    def num(key):
+        m = re.search(r"\d+(\.\d+)?", info.get(key, ""))
+        return float(m.group()) if m else None
+    return {"ssid": info.get("ssid", ""), "radio": info.get("radio type", ""), "band": info.get("band", ""),
+            "channel": info.get("channel", ""), "rx": num("receive rate (mbps)"),
+            "tx": num("transmit rate (mbps)"), "signal": num("signal")}
 
 
 def public_ip():

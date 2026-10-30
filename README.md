@@ -9,6 +9,7 @@ A small always-on-top Windows widget (Python + PySide6) showing live system stat
 **Monitoring**
 - CPU, GPU (any vendor, via Windows GPU counters) and RAM, with an optional GPU switch to save resources
 - Disk read/write speed, free space per drive, network up/down speed with a Wi-Fi or Ethernet label
+- Link speed: the negotiated Ethernet speed and duplex (amber at 100 Mb/s or less), or the live Wi-Fi rate, band, channel and signal strength
 - Local and public IP (public IP is looked up through api.ipify.org every 5 minutes). Click either to copy it
 - VPN badge when a VPN adapter (WireGuard, OpenVPN, Tailscale and similar) is up
 - Battery and power plan on laptops
@@ -18,6 +19,7 @@ A small always-on-top Windows widget (Python + PySide6) showing live system stat
 - Network settings: switch the active adapter between DHCP and static IP, DNS presets (Cloudflare, Google, Auto, Custom), saved profiles
 - Ping with a live latency graph, average, max and loss
 - Connection history: a graph of the last hour of pings to 1.1.1.1
+- Local speed test: the widget serves a test page on your LAN and shows a QR code and link. Open it on a phone or another PC to measure the real speed between that device and this PC (download, upload, ping). The server only runs while the panel is open, needs the random token in the link, and only accepts private network addresses. If a device can't connect, press "Allow in firewall" in the panel
 - Speed test against Cloudflare with a live Speedtest-style gauge. Pure download and upload use bytes no cache can answer. An optional cached download fetches a CDN-cached file (jsDelivr) so you can compare the two (about 70 MB per run, about 100 MB with the cached test)
 
 **Alerts** (Windows notifications from a tray icon)

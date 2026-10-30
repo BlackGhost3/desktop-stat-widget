@@ -18,19 +18,20 @@ from PySide6.QtWidgets import (
 
 import features
 import hotkey
+import localtest
 import sysinfo
 import theme
 import updater
 import winutil
 from theme import P
-from widgets import Bar, Gauge, IconBtn, Metric, Spark, label
+from widgets import Bar, Gauge, IconBtn, Metric, QrView, Spark, label
 
 DNS_PRESETS = {"cloudflare": ["1.1.1.1", "1.0.0.1"], "google": ["8.8.8.8", "8.8.4.4"]}
 MODES = ["full", "compact", "mini"]
 SHOW_KEYS = (("cpu", "CPU"), ("ram", "RAM"), ("net", "Network speed"), ("disk", "Disk speed"),
              ("ip", "Local IP and DNS"), ("public", "Public IP"), ("space", "Free disk space"))
 PANELS = (("net", "Network settings"), ("ping", "Ping"), ("hist", "Connection history"),
-          ("speed", "Speed test"), ("proc", "Top processes"))
+          ("speed", "Speed test"), ("local", "Local speed test"), ("proc", "Top processes"))
 SNAP = 14
 
 
@@ -41,6 +42,8 @@ class Bridge(QObject):
     update_checked = Signal(object, bool)  # release dict or error string, user-initiated
     update_installed = Signal(object)  # error string or None
     speed_status = Signal(str)
+    link_changed = Signal()
+    local_result = Signal(object)  # result dict from a device that ran the local test
     speed_live = Signal(str, float)  # phase, current Mb/s
     speed_done = Signal(object)  # result dict or error string
 
@@ -69,6 +72,9 @@ class Card(QWidget):
         self.open_panel = None
         self.proc_sort, self.proc_pids, self.proc_names = "cpu", [], []
         self.speed_running = False
+        self.wifi, self.link_html, self.link_plain = {}, "", ""
+        self.local = None
+        self.local_results = deque(self.cfg.get("local_results", []), maxlen=5)
         self.last_gateway, self.suggested = None, None
         self.pending_click = None
         self.rates = sysinfo.Rates()
@@ -90,6 +96,8 @@ class Card(QWidget):
         self.bridge.update_checked.connect(self.on_update_checked)
         self.bridge.update_installed.connect(self.on_update_installed)
         self.bridge.speed_status.connect(lambda t: self.l_speed_status.setText(t))
+        self.bridge.link_changed.connect(self.update_link)
+        self.bridge.local_result.connect(self.on_local_result)
         self.bridge.speed_live.connect(self.on_speed_live)
         self.bridge.speed_done.connect(self.on_speed_done)
 
@@ -119,6 +127,7 @@ class Card(QWidget):
         QTimer(self, interval=120, timeout=self.hover_check).start()
         QTimer(self, interval=10000, timeout=self.follow_system_theme).start()
         QTimer(self, interval=2000, timeout=self.refresh_procs).start()
+        QTimer(self, interval=5000, timeout=self.refresh_wifi).start()
         QTimer.singleShot(8000, lambda: self.check_updates(manual=False))
         self.set_mode(self.mode)
 
@@ -172,6 +181,9 @@ class Card(QWidget):
         nl.addWidget(self.l_speed)
         nl.addWidget(self.l_link, 1)
         bl.addWidget(self.net_w)
+        self.l_linkd = label("", dim=True)
+        self.l_linkd.setTextFormat(Qt.RichText)
+        bl.addWidget(self.l_linkd)
         self.spark_net = Spark("ACCENT")
         bl.addWidget(self.spark_net)
         bl.addWidget(self.m_read)
@@ -187,7 +199,7 @@ class Card(QWidget):
 
         self.panels = {"net": self.build_net_panel(), "ping": self.build_ping_panel(),
                        "hist": self.build_hist_panel(), "speed": self.build_speed_panel(),
-                       "proc": self.build_proc_panel()}
+                       "local": self.build_local_panel(), "proc": self.build_proc_panel()}
         for pnl in self.panels.values():
             pnl.setMinimumWidth(330)
             pnl.hide()
@@ -330,6 +342,48 @@ class Card(QWidget):
         lay.addWidget(self.l_speed_status)
         return w
 
+    def build_local_panel(self):
+        w, lay = self.panel()
+        top = QHBoxLayout()
+        top.addWidget(label("Local speed test · device to this PC", dim=True), 1)
+        self.b_fw = QPushButton("Allow in firewall")
+        self.b_fw.setProperty("small", True)
+        self.b_fw.setToolTip("Adds a Windows Firewall rule so other devices can reach the test page")
+        self.b_fw.clicked.connect(self.allow_firewall)
+        self.b_local = QPushButton("Start")
+        self.b_local.setProperty("primary", True)
+        self.b_local.clicked.connect(self.toggle_local)
+        top.addWidget(self.b_fw)
+        top.addWidget(self.b_local)
+        lay.addLayout(top)
+        self.l_local_link = label("", dim=True)
+        lay.addWidget(self.l_local_link)
+        urlrow = QHBoxLayout()
+        self.f_url = QLineEdit()
+        self.f_url.setReadOnly(True)
+        b_copy = QPushButton("Copy")
+        b_copy.setProperty("small", True)
+        b_copy.clicked.connect(lambda: self.copy_text(self.f_url.text(), "link"))
+        urlrow.addWidget(self.f_url, 1)
+        urlrow.addWidget(b_copy)
+        self.url_box = QWidget()
+        self.url_box.setLayout(urlrow)
+        urlrow.setContentsMargins(0, 0, 0, 0)
+        lay.addWidget(self.url_box)
+        self.qr = QrView()
+        lay.addWidget(self.qr, 0, Qt.AlignHCenter)
+        self.l_local_status = label("Start the server, then scan the code or open the link on a device on the "
+                                    "same network.", dim=True)
+        self.l_local_status.setWordWrap(True)
+        lay.addWidget(self.l_local_status)
+        self.local_rows = [label("", mono=True) for _ in range(5)]
+        for row in self.local_rows:
+            lay.addWidget(row)
+        self.url_box.hide()
+        self.qr.hide()
+        self.render_local_results()
+        return w
+
     def build_proc_panel(self):
         w, lay = self.panel()
         top = QHBoxLayout()
@@ -398,6 +452,7 @@ class Card(QWidget):
         self.m_ram.setVisible(s["ram"])
         self.sep.setVisible(s["cpu"] or s["ram"] or self.gpu_on)
         self.net_w.setVisible(s["net"])
+        self.l_linkd.setVisible(s["net"] and bool(self.link_html))
         self.spark_net.setVisible(full and s["net"])
         for w in (self.m_read, self.m_write):
             w.setVisible(full and s["disk"])
@@ -536,6 +591,8 @@ class Card(QWidget):
 
     def show_panel(self, key, sort=None):
         self.open_panel = key
+        if key != "local" and self.local:
+            self.stop_local()
         if sort:
             self.set_proc_sort(sort)
         self.apply_visibility()
@@ -652,6 +709,8 @@ class Card(QWidget):
             self.gpu.stop()
         if self.pinger:
             self.pinger.stop()
+        if self.local:
+            self.local.stop()
         if self.hotkey_filter:
             self.hotkey_filter.unregister()
         self.tray.hide()
@@ -804,6 +863,9 @@ class Card(QWidget):
         self.l_vpn.setVisible(bool(c.get("vpn")) and self.mode != "mini")
         self.l_vpn.setToolTip(f"VPN active: {c.get('vpn', '')}")
         self.net_title.setText(f"Network settings · {c.get('alias', '')}")
+        self.update_link()
+        if sysinfo.link_kind(c) == "Wi-Fi" and not self.wifi:
+            self.refresh_wifi()
         if not self.f_ip.isModified() and not self.f_ip.hasFocus():
             self.load_form()
         self.suggest_profile()
@@ -856,6 +918,104 @@ class Card(QWidget):
         failed = features.end_processes(pids)
         if failed:
             QMessageBox.warning(self, "End process", f"{failed} process(es) couldn't be ended. They may need admin rights.")
+
+    # ---------- link speed ----------
+    def refresh_wifi(self):
+        if not self.netinfo or sysinfo.link_kind(self.netinfo) != "Wi-Fi":
+            return
+
+        def work():
+            self.wifi = sysinfo.wifi_info()
+            self.bridge.link_changed.emit()
+        threading.Thread(target=work, daemon=True).start()
+
+    def update_link(self):
+        """Builds the link-speed line: negotiated Ethernet speed, or the live Wi-Fi rate, band and signal."""
+        c, parts, warn = self.netinfo, [], False
+        if c and not c.get("vpn_only"):
+            if sysinfo.link_kind(c) == "Wi-Fi" and self.wifi:
+                w = self.wifi
+                if w.get("band"):
+                    parts.append(w["band"] + (f" ch {w['channel']}" if w.get("channel") else ""))
+                if w.get("rx") and w.get("tx"):
+                    parts.append(f"↓{w['rx']:.0f} ↑{w['tx']:.0f} Mb/s")
+                if w.get("signal") is not None:
+                    parts.append(f"signal {w['signal']:.0f}%")
+                    warn = w["signal"] < 40
+            else:
+                speed = int(c["speed"]) if str(c.get("speed", "")).isdigit() else 0
+                if 0 < speed < 10**12:
+                    parts.append(sysinfo.fmt_speed(speed))
+                    half = c.get("duplex") is False
+                    parts.append("half duplex" if half else "full duplex")
+                    warn = speed <= 100_000_000 or half
+        text = " · ".join(parts)
+        self.link_plain = f"This PC: {sysinfo.link_kind(c)} {text}" if text else ""
+        color = P.AMBER if warn else P.DIM
+        self.link_html = f"<span style='color:{color}'>{text}</span>" if text else ""
+        self.l_linkd.setText(self.link_html)
+        self.l_linkd.setToolTip("Link speed is the ceiling of this connection. Real speed is lower."
+                                + (" Amber means a slow link or weak signal." if warn else ""))
+        self.l_local_link.setText(self.link_plain)
+        self.apply_visibility()
+
+    # ---------- local network speed test ----------
+    def toggle_local(self):
+        if self.local:
+            self.stop_local()
+            return
+        server = localtest.LocalServer(self.bridge.local_result.emit)
+        try:
+            server.start()
+        except OSError as err:
+            self.l_local_status.setText(str(err))
+            return
+        self.local = server
+        url = server.url(self.netinfo.get("ip") or localtest.lan_ip())
+        self.f_url.setText(url)
+        self.f_url.setCursorPosition(0)
+        self.qr.set_data(url)
+        self.url_box.show()
+        self.qr.show()
+        self.b_local.setText("Stop")
+        self.l_local_status.setText("Waiting for a device. Scan the code or open the link on the same network. "
+                                    "If it can't connect, press Allow in firewall.")
+        self.adjustSize()
+
+    def stop_local(self):
+        if self.local:
+            self.local.stop()
+            self.local = None
+        self.url_box.hide()
+        self.qr.hide()
+        self.b_local.setText("Start")
+        self.l_local_status.setText("Server stopped. Start it again to test another device.")
+        self.adjustSize()
+
+    def on_local_result(self, r):
+        self.local_results.appendleft(r)
+        self.cfg["local_results"] = list(self.local_results)
+        self.render_local_results()
+        self.l_local_status.setText(f"{r['device']} ({r['ip']}) finished a test.")
+        self.save()
+
+    def render_local_results(self):
+        for i, row in enumerate(self.local_rows):
+            if i < len(self.local_results):
+                r = self.local_results[i]
+                row.setText(f"{r['time']} {r['device'][:14]:<14} ↓{r['down']:.0f} ↑{r['up']:.0f} Mb/s {r['ping']:.0f} ms")
+            row.setVisible(i < len(self.local_results))
+
+    def allow_firewall(self):
+        if QMessageBox.question(self, "Windows Firewall", "Allow incoming connections to this app on private "
+                                "networks so phones and other PCs can open the test page? This needs admin approval.") != QMessageBox.Yes:
+            return
+        name, exe = "Desktop Stat Widget", sys.executable
+        cmds = [f'netsh advfirewall firewall delete rule name="{name}"',
+                f'netsh advfirewall firewall add rule name="{name}" dir=in action=allow program="{exe}" '
+                "profile=private enable=yes"]
+        if not winutil.run_elevated(cmds):
+            QMessageBox.warning(self, "Windows Firewall", "Admin approval was declined, so nothing changed.")
 
     # ---------- connection history and speed test ----------
     def refresh_hist(self):
