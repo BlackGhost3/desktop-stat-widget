@@ -230,7 +230,7 @@ class _Handler(BaseHTTPRequestHandler):
                 data = json.loads(self.rfile.read(length))
                 result = {"event": "result", "ping": float(data["ping"]), "down": float(data["down"]), "up": float(data["up"]),
                           "ip": self.client_address[0], "device": device_name(self.headers.get("User-Agent", "")),
-                          "time": time.strftime("%H:%M")}
+                          "time": time.strftime("%d %b %H:%M")}
             except (ValueError, KeyError, TypeError):
                 self._reply(400, b"Bad result")
                 return

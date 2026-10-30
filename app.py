@@ -12,13 +12,14 @@ import psutil
 from PySide6.QtCore import QObject, QPoint, QRect, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QCursor, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
-    QApplication, QHBoxLayout, QInputDialog, QLabel, QLayout, QLineEdit, QMenu, QMessageBox,
+    QApplication, QHBoxLayout, QInputDialog, QLayout, QLineEdit, QMenu, QMessageBox,
     QPushButton, QSystemTrayIcon, QToolTip, QVBoxLayout, QWidget,
 )
 
 import features
 import hotkey
 import localtest
+from history import HistoryWindow
 import sysinfo
 import theme
 import updater
@@ -81,7 +82,8 @@ class Card(QWidget):
         self.wifi, self.link_html, self.link_plain = {}, "", ""
         self.local = None
         self.device_names, self.done_ip = dict(self.cfg.get("device_names", {})), None
-        self.local_results = deque(self.cfg.get("local_results", []), maxlen=5)
+        self.local_results = deque(self.cfg.get("local_results", []), maxlen=50)
+        self.history_win = None
         self.last_gateway, self.suggested = None, None
         self.pending_click = None
         self.rates = sysinfo.Rates()
@@ -223,6 +225,8 @@ class Card(QWidget):
         for pnl in self.panels.values():
             pnl.setStyleSheet(f"#panel {{ background:{P.PANEL}; border-radius:12px; }}")
         self.done_card.setStyleSheet(f"#done {{ background:{P.BG}; border-radius:10px; }}")
+        if getattr(self, "history_win", None):
+            self.history_win.refresh()
         self.update()
         for w in self.findChildren(QWidget):
             w.update()
@@ -360,9 +364,14 @@ class Card(QWidget):
         self.b_fw.setProperty("small", True)
         self.b_fw.setToolTip("Adds a Windows Firewall rule so other devices can reach the test page")
         self.b_fw.clicked.connect(self.allow_firewall)
+        self.b_history = QPushButton("History")
+        self.b_history.setProperty("small", True)
+        self.b_history.setToolTip("Opens past results in their own window")
+        self.b_history.clicked.connect(self.open_history)
         self.b_local = QPushButton("Start")
         self.b_local.setProperty("primary", True)
         self.b_local.clicked.connect(self.toggle_local)
+        top.addWidget(self.b_history)
         top.addWidget(self.b_fw)
         top.addWidget(self.b_local)
         lay.addLayout(top)
@@ -423,15 +432,6 @@ class Card(QWidget):
                                     "same network.", dim=True)
         self.l_local_status.setWordWrap(True)
         lay.addWidget(self.l_local_status)
-        self.local_rows = []
-        for i in range(5):
-            row = QLabel()  # not mouse-transparent, so it can show a right-click menu
-            row.setTextFormat(Qt.RichText)
-            row.setContextMenuPolicy(Qt.CustomContextMenu)
-            row.customContextMenuRequested.connect(lambda _pos, i=i: self.row_menu(i))
-            row.setToolTip("Right-click to rename this device")
-            self.local_rows.append(row)
-            lay.addWidget(row)
         self.url_box.hide()
         self.qr.hide()
         self.render_local_results()
@@ -778,6 +778,8 @@ class Card(QWidget):
             self.pinger.stop()
         if self.local:
             self.local.stop()
+        if self.history_win:
+            self.history_win.close()
         if self.hotkey_filter:
             self.hotkey_filter.unregister()
         self.tray.hide()
@@ -1096,14 +1098,6 @@ class Card(QWidget):
         if self.done_ip == ip and self.local_results:
             self.show_done(self.local_results[0])
 
-    def row_menu(self, i):
-        if i >= len(self.local_results):
-            return
-        r = self.local_results[i]
-        menu = QMenu(self)
-        menu.addAction(f"Rename {r['ip']}…", lambda: self.rename_device(r["ip"]))
-        menu.exec(QCursor.pos())
-
     def show_done(self, r):
         who = f"{self.name_of(r)} ({r['ip']})"
         self.done_ip = r["ip"]
@@ -1163,14 +1157,32 @@ class Card(QWidget):
             QTimer.singleShot(3000, self.check_firewall)
 
     def render_local_results(self):
-        for i, row in enumerate(self.local_rows):
-            if i < len(self.local_results):
-                r = self.local_results[i]
-                dim = f"color:{P.DIM}"
-                row.setText(f"<b>{self.name_of(r)}</b> <span style='{dim}'>· {r['ip']} · {r['time']}</span><br>"
-                            f"<span style='font-family:Consolas'>↓{rate(r['down'])}  ↑{rate(r['up'])}  "
-                            f"{r['ping']:.0f} ms</span>")
-            row.setVisible(i < len(self.local_results))
+        """Keeps the history window, if open, in step with the stored results and the History button's count."""
+        self.b_history.setText(f"History ({len(self.local_results)})" if self.local_results else "History")
+        if self.history_win:
+            self.history_win.refresh()
+
+    def open_history(self):
+        if not self.history_win:
+            self.history_win = HistoryWindow(lambda: self.local_results, self.name_of, self.rename_device,
+                                             self.clear_history)
+            right = self.frameGeometry().right() + 12
+            screen = self.screen().availableGeometry()
+            x = right if right + self.history_win.width() <= screen.right() else \
+                max(screen.left(), self.frameGeometry().left() - self.history_win.width() - 12)
+            self.history_win.move(x, self.frameGeometry().top())
+        self.history_win.refresh()
+        self.history_win.show()
+        self.history_win.raise_()
+        self.history_win.activateWindow()
+
+    def clear_history(self):
+        if not self.ask("Clear history", "Delete all saved local speed test results?"):
+            return
+        self.local_results.clear()
+        self.cfg["local_results"] = []
+        self.save()
+        self.render_local_results()
 
     def allow_firewall(self):
         if not self.ask("Windows Firewall", "Allow incoming connections to this app on private networks so "
