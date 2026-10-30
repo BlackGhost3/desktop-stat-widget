@@ -67,7 +67,7 @@ Settings and profiles are stored in `%APPDATA%\StatWidget\config.json`.
 Bump `VERSION` in `updater.py`, push, run `build.bat`, then create a release whose tag is the new version and attach the exe:
 
 ```bash
-gh release create v1.2.0 dist\DesktopStatWidget.exe --title "v1.2.0" --notes "What changed"
+gh release create v1.3.0 dist\DesktopStatWidget.exe --title "v1.3.0" --notes "What changed"
 ```
 
 The widget checks on launch and from the menu. The packaged exe downloads the new `DesktopStatWidget.exe` from the release, swaps itself, and restarts. A copy run from source downloads the release source and replaces the `.py`, `.txt`, `.bat` and `.md` files. A git checkout is never overwritten; the widget opens the release page instead.

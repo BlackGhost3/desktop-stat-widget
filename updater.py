@@ -10,7 +10,7 @@ import urllib.parse
 import urllib.request
 import zipfile
 
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 REPO = "BlackGhost3/desktop-stat-widget"
 API = f"https://api.github.com/repos/{REPO}/releases/latest"
 FROZEN = getattr(sys, "frozen", False)  # True when running as the packaged .exe
