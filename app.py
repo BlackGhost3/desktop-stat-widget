@@ -33,6 +33,11 @@ SHOW_KEYS = (("cpu", "CPU"), ("ram", "RAM"), ("net", "Network speed"), ("disk", 
 PANELS = (("net", "Network settings"), ("ping", "Ping"), ("hist", "Connection history"),
           ("speed", "Speed test"), ("local", "Local speed test"), ("proc", "Top processes"))
 SNAP = 14
+FIREWALL_RULE = "Desktop Stat Widget"
+
+
+def rate(mbps):
+    return f"{mbps / 1000:.2f} Gb/s" if mbps >= 1000 else f"{mbps:.0f} Mb/s"
 
 
 class Bridge(QObject):
@@ -43,6 +48,7 @@ class Bridge(QObject):
     update_installed = Signal(object)  # error string or None
     speed_status = Signal(str)
     link_changed = Signal()
+    firewall_checked = Signal(bool)
     local_result = Signal(object)  # result dict from a device that ran the local test
     speed_live = Signal(str, float)  # phase, current Mb/s
     speed_done = Signal(object)  # result dict or error string
@@ -97,6 +103,8 @@ class Card(QWidget):
         self.bridge.update_installed.connect(self.on_update_installed)
         self.bridge.speed_status.connect(lambda t: self.l_speed_status.setText(t))
         self.bridge.link_changed.connect(self.update_link)
+        self.bridge.firewall_checked.connect(self.on_firewall)
+        self.fw_polls = 0
         self.bridge.local_result.connect(self.on_local_result)
         self.bridge.speed_live.connect(self.on_speed_live)
         self.bridge.speed_done.connect(self.on_speed_done)
@@ -213,6 +221,7 @@ class Card(QWidget):
         self.l_vpn.setStyleSheet(f"color:{P.GREEN}; font-size:10px; font-weight:500; padding:0 6px;")
         for pnl in self.panels.values():
             pnl.setStyleSheet(f"#panel {{ background:{P.PANEL}; border-radius:12px; }}")
+        self.done_card.setStyleSheet(f"#done {{ background:{P.BG}; border-radius:10px; }}")
         self.update()
         for w in self.findChildren(QWidget):
             w.update()
@@ -356,6 +365,28 @@ class Card(QWidget):
         top.addWidget(self.b_fw)
         top.addWidget(self.b_local)
         lay.addLayout(top)
+        self.done_card = QWidget()
+        self.done_card.setObjectName("done")
+        dc = QVBoxLayout(self.done_card)
+        dc.setContentsMargins(12, 10, 12, 10)
+        dc.setSpacing(6)
+        self.l_done_title = label("")
+        dc.addWidget(self.l_done_title)
+        vals = QHBoxLayout()
+        vals.setSpacing(20)
+        self.done_vals = {}
+        for key, name in (("down", "Download"), ("up", "Upload"), ("ping", "Ping")):
+            col = QVBoxLayout()
+            col.setSpacing(0)
+            col.addWidget(label(name, dim=True))
+            v = label("–")
+            v.setStyleSheet("font-size:20px; font-weight:500;")
+            col.addWidget(v)
+            self.done_vals[key] = v
+            vals.addLayout(col)
+        dc.addLayout(vals)
+        self.done_card.hide()
+        lay.addWidget(self.done_card)
         self.l_local_link = label("", dim=True)
         lay.addWidget(self.l_local_link)
         urlrow = QHBoxLayout()
@@ -517,6 +548,18 @@ class Card(QWidget):
     def contextMenuEvent(self, e):
         self.show_menu(e.globalPos())
 
+    def tell(self, title, text):
+        self._box(QMessageBox.Information, title, text, QMessageBox.Ok).exec()
+
+    def ask(self, title, text):
+        return self._box(QMessageBox.Question, title, text, QMessageBox.Yes | QMessageBox.No).exec() == QMessageBox.Yes
+
+    def _box(self, icon, title, text, buttons):
+        """Message box that stays above this always-on-top widget instead of opening behind it."""
+        box = QMessageBox(icon, title, text, buttons, self)
+        box.setWindowFlag(Qt.WindowStaysOnTopHint, True)
+        return box
+
     def copy_text(self, text, what):
         if text:
             QApplication.clipboard().setText(text)
@@ -596,6 +639,8 @@ class Card(QWidget):
         if sort:
             self.set_proc_sort(sort)
         self.apply_visibility()
+        if key == "local":
+            self.check_firewall()
         if key == "proc":
             self.refresh_procs()
         elif key == "hist":
@@ -676,7 +721,7 @@ class Card(QWidget):
         self.hotkey_on = on
         self.set_hotkey(on)
         if on and not self.hotkey_filter:
-            QMessageBox.information(self, "Hotkey", "Ctrl+Alt+W is already used by another app.")
+            self.tell("Hotkey", "Ctrl+Alt+W is already used by another app.")
         self.save()
 
     def toggle_visible(self):
@@ -690,7 +735,7 @@ class Card(QWidget):
         try:
             winutil.set_startup(on)
         except OSError as err:
-            QMessageBox.warning(self, "Startup", f"Couldn't change the startup entry.\n{err}")
+            self.tell("Startup", f"Couldn't change the startup entry.\n{err}")
 
     def save(self):
         self.cfg.update(mode=self.mode, pinned=self.pinned, pos=[self.x(), self.y()],
@@ -910,14 +955,14 @@ class Card(QWidget):
         if not pids:
             return
         if name.lower() in features.PROTECTED:
-            QMessageBox.information(self, "Top processes", f"{name} is part of Windows, so it can't be ended here.")
+            self.tell("Top processes", f"{name} is part of Windows, so it can't be ended here.")
             return
         count = f" ({len(pids)} processes)" if len(pids) > 1 else ""
-        if QMessageBox.question(self, "End process", f"End {name}{count}? Unsaved work in it will be lost.") != QMessageBox.Yes:
+        if not self.ask("End process", f"End {name}{count}? Unsaved work in it will be lost."):
             return
         failed = features.end_processes(pids)
         if failed:
-            QMessageBox.warning(self, "End process", f"{failed} process(es) couldn't be ended. They may need admin rights.")
+            self.tell("End process", f"{failed} process(es) couldn't be ended. They may need admin rights.")
 
     # ---------- link speed ----------
     def refresh_wifi(self):
@@ -993,29 +1038,65 @@ class Card(QWidget):
         self.adjustSize()
 
     def on_local_result(self, r):
+        who = f"{r['device']} ({r['ip']})"
+        if r.get("event") == "start":
+            self.done_card.hide()
+            self.l_local_status.setText(f"Testing {who}…")
+            self.adjustSize()
+            return
         self.local_results.appendleft(r)
         self.cfg["local_results"] = list(self.local_results)
         self.render_local_results()
-        self.l_local_status.setText(f"{r['device']} ({r['ip']}) finished a test.")
+        self.l_done_title.setText(f"<span style='color:{P.GREEN}'><b>✓ Test complete</b></span> · {who}")
+        self.done_vals["down"].setText(rate(r["down"]))
+        self.done_vals["up"].setText(rate(r["up"]))
+        self.done_vals["ping"].setText(f"{r['ping']:.0f} ms")
+        self.done_card.show()
+        self.l_local_status.setText("Run it again on the device, or scan the code with another one.")
+        self.notify("Local speed test finished", f"{r['device']}: ↓{rate(r['down'])} ↑{rate(r['up'])}, "
+                                                 f"ping {r['ping']:.0f} ms")
+        self.adjustSize()
         self.save()
+
+    def check_firewall(self):
+        def work():
+            try:
+                rc = subprocess.run(["netsh", "advfirewall", "firewall", "show", "rule", f'name={FIREWALL_RULE}'],
+                                    capture_output=True, timeout=8, creationflags=sysinfo.NO_WINDOW).returncode
+            except (subprocess.SubprocessError, OSError):
+                rc = 1
+            self.bridge.firewall_checked.emit(rc == 0)
+        threading.Thread(target=work, daemon=True).start()
+
+    def on_firewall(self, allowed):
+        self.b_fw.setVisible(not allowed)
+        if allowed:
+            self.fw_polls = 0
+            self.adjustSize()
+        elif self.fw_polls > 0:  # waiting for the admin prompt to be approved
+            self.fw_polls -= 1
+            QTimer.singleShot(3000, self.check_firewall)
 
     def render_local_results(self):
         for i, row in enumerate(self.local_rows):
             if i < len(self.local_results):
                 r = self.local_results[i]
-                row.setText(f"{r['time']} {r['device'][:14]:<14} ↓{r['down']:.0f} ↑{r['up']:.0f} Mb/s {r['ping']:.0f} ms")
+                row.setText(f"{r['time']} {r['device'][:10]:<10} ↓{rate(r['down'])} ↑{rate(r['up'])} {r['ping']:.0f}ms")
             row.setVisible(i < len(self.local_results))
 
     def allow_firewall(self):
-        if QMessageBox.question(self, "Windows Firewall", "Allow incoming connections to this app on private "
-                                "networks so phones and other PCs can open the test page? This needs admin approval.") != QMessageBox.Yes:
+        if not self.ask("Windows Firewall", "Allow incoming connections to this app on private networks so "
+                        "phones and other PCs can open the test page? This needs admin approval."):
             return
-        name, exe = "Desktop Stat Widget", sys.executable
-        cmds = [f'netsh advfirewall firewall delete rule name="{name}"',
-                f'netsh advfirewall firewall add rule name="{name}" dir=in action=allow program="{exe}" '
+        exe = sys.executable
+        cmds = [f'netsh advfirewall firewall delete rule name="{FIREWALL_RULE}"',
+                f'netsh advfirewall firewall add rule name="{FIREWALL_RULE}" dir=in action=allow program="{exe}" '
                 "profile=private enable=yes"]
-        if not winutil.run_elevated(cmds):
-            QMessageBox.warning(self, "Windows Firewall", "Admin approval was declined, so nothing changed.")
+        if winutil.run_elevated(cmds):
+            self.fw_polls = 10  # check every 3 s for the rule while the admin prompt is answered
+            QTimer.singleShot(3000, self.check_firewall)
+        else:
+            self.tell("Windows Firewall", "Admin approval was declined, so nothing changed.")
 
     # ---------- connection history and speed test ----------
     def refresh_hist(self):
@@ -1116,7 +1197,7 @@ class Card(QWidget):
     def apply_net(self):
         alias = self.netinfo.get("alias")
         if not alias or '"' in alias:
-            QMessageBox.warning(self, "Network", "No active network adapter found.")
+            self.tell("Network", "No active network adapter found.")
             return
         cmds = []
         try:
@@ -1138,15 +1219,15 @@ class Card(QWidget):
                 cmds += [f'netsh interface ip add dns name="{alias}" {s} index={i}'
                          for i, s in enumerate(servers[1:], 2)]
         except ValueError as err:
-            QMessageBox.warning(self, "Network", str(err))
+            self.tell("Network", str(err))
             return
-        if QMessageBox.question(self, "Apply", f"Change network settings on {alias}?") != QMessageBox.Yes:
+        if not self.ask("Apply", f"Change network settings on {alias}?"):
             return
         if winutil.run_elevated(cmds):
             QTimer.singleShot(6000, self.refresh_net_config)
             QTimer.singleShot(8000, self.refresh_public_ip)
         else:
-            QMessageBox.warning(self, "Network", "Admin approval was declined, so nothing changed.")
+            self.tell("Network", "Admin approval was declined, so nothing changed.")
 
     def rebuild_profiles(self):
         while self.prof_row.count():
@@ -1165,7 +1246,12 @@ class Card(QWidget):
         self.prof_row.addStretch(1)
 
     def save_profile(self):
-        name, ok = QInputDialog.getText(self, "Save profile", "Profile name")
+        dialog = QInputDialog(self)
+        dialog.setWindowFlag(Qt.WindowStaysOnTopHint, True)
+        dialog.setWindowTitle("Save profile")
+        dialog.setLabelText("Profile name")
+        ok = dialog.exec() == QInputDialog.Accepted
+        name = dialog.textValue()
         if ok and name.strip():
             self.cfg.setdefault("profiles", {})[name.strip()] = self.form_data()
             self.save()
@@ -1249,7 +1335,7 @@ class Card(QWidget):
     def on_update_checked(self, result, manual):
         if isinstance(result, str):  # error
             if manual:
-                QMessageBox.information(self, "Updates", result)
+                self.tell("Updates", result)
             return
         if updater.is_newer(result["tag"]):
             self.update_info = result
@@ -1258,21 +1344,20 @@ class Card(QWidget):
         else:
             self.update_info = None
             if manual:
-                QMessageBox.information(self, "Updates", f"You're up to date (version {updater.VERSION}).")
+                self.tell("Updates", f"You're up to date (version {updater.VERSION}).")
 
     def prompt_update(self):
         info = self.update_info
         if not info:
             return
         if updater.in_git_checkout():
-            if QMessageBox.question(self, "Update available", f"{info['tag']} is available. This copy is a git "
-                                    "checkout, so update it with git pull. Open the release page?") == QMessageBox.Yes:
+            if self.ask("Update available", f"{info['tag']} is available. This copy is a git "
+                        "checkout, so update it with git pull. Open the release page?"):
                 webbrowser.open(info["page"])
             return
         notes = info["notes"].strip()[:400]
-        box = QMessageBox.question(self, "Update available", f"Version {info['tag']} is available "
-                                   f"(you have {updater.VERSION}).\n\n{notes}\n\nInstall it and restart?")
-        if box != QMessageBox.Yes:
+        if not self.ask("Update available", f"Version {info['tag']} is available "
+                        f"(you have {updater.VERSION}).\n\n{notes}\n\nInstall it and restart?"):
             return
 
         def work():
@@ -1285,7 +1370,7 @@ class Card(QWidget):
 
     def on_update_installed(self, err):
         if err:
-            QMessageBox.warning(self, "Updates", f"Update failed. {err}")
+            self.tell("Updates", f"Update failed. {err}")
             return
         self.save()
         subprocess.Popen([sys.executable, os.path.join(updater.APP_DIR, "app.py")], cwd=updater.APP_DIR)

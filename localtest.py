@@ -36,6 +36,13 @@ h1{font-size:16px;font-weight:500;margin:0;color:var(--dim)}
 .tile{background:var(--panel);border-radius:12px;padding:12px;text-align:center}
 .tile span{display:block;font-size:12px;color:var(--dim)}
 .tile b{font-size:20px;font-weight:500}
+.results{display:none;width:min(360px,92vw);flex-direction:column;gap:12px}
+body.done .gauge,body.done .tiles{display:none}
+body.done .results{display:flex}
+#ok{text-align:center;font-size:18px;color:#5fd8a6;font-weight:500}
+.big{background:var(--panel);border-radius:16px;padding:18px;text-align:center}
+.big span{display:block;font-size:14px;color:var(--dim)}
+.big b{font-size:44px;font-weight:500}
 button{background:var(--blue);color:#14151a;border:0;border-radius:10px;padding:12px 28px;font-size:15px;font-weight:500}
 button:disabled{opacity:.5}
 #msg{font-size:13px;color:var(--dim);text-align:center;max-width:340px}
@@ -49,6 +56,10 @@ button:disabled{opacity:.5}
 <div class="tiles"><div class="tile"><span>Ping</span><b id="tp">–</b></div>
 <div class="tile"><span>Download</span><b id="td">–</b></div>
 <div class="tile"><span>Upload</span><b id="tu">–</b></div></div>
+<div class="results"><div id="ok">&#10003; Test complete</div>
+<div class="big"><span>Download</span><b id="rd" style="color:#7f9cff">–</b></div>
+<div class="big"><span>Upload</span><b id="ru" style="color:#b58cff">–</b></div>
+<div class="tile"><span>Ping</span><b id="rp">–</b></div></div>
 <button id="go">Start test</button>
 <div id="msg">Keep this page open while the test runs.</div>
 <script>
@@ -73,12 +84,13 @@ const run=i=>{if(performance.now()-t0>=dur){if(++fin===n)res(total()*8/(performa
 const x=new XMLHttpRequest();x.open('POST',q('/up'));let last=0;
 x.upload.onprogress=e=>{sent[i]+=e.loaded-last;last=e.loaded;const el=performance.now()-t0;if(el>300)show(total()*8/el/1e3,'Upload','#b58cff');if(el>=dur+400)x.abort()};
 x.onload=x.onerror=x.onabort=()=>run(i);x.send(blob)};for(let i=0;i<n;i++)run(i)})}
-async function main(){$('go').disabled=true;['tp','td','tu'].forEach(i=>$(i).textContent='–');$('msg').textContent='Testing…';
+async function main(){document.body.classList.remove('done');fetch(q('/begin')).catch(()=>{});$('go').disabled=true;['tp','td','tu'].forEach(i=>$(i).textContent='–');$('msg').textContent='Testing…';
 try{show(0,'Ping','#7f9cff');const p=await ping();$('tp').textContent=p.toFixed(0)+' ms';
 const d=await down();show(d,'Download','#7f9cff');$('td').textContent=fmt(d);await new Promise(r=>setTimeout(r,1200));
 show(0,'Upload','#b58cff');await new Promise(r=>setTimeout(r,800));const u=await up();show(u,'Upload','#b58cff');$('tu').textContent=fmt(u);
 await fetch(q('/result'),{method:'POST',body:JSON.stringify({ping:p,down:d,up:u})});
-$('msg').textContent='Done. The result was sent to the PC.'}catch(e){$('msg').textContent='The test failed. Check that you are on the same network.'}
+$('rd').textContent=fmt(d);$('ru').textContent=fmt(u);$('rp').textContent=p.toFixed(0)+' ms';document.body.classList.add('done');
+$('msg').textContent='The result was also sent to the PC.'}catch(e){$('msg').textContent='The test failed. Check that you are on the same network.'}
 $('go').disabled=false;$('go').textContent='Run again'}
 $('go').onclick=main;setTimeout(main,400);
 </script></body></html>
@@ -184,10 +196,14 @@ class _Handler(BaseHTTPRequestHandler):
                     break
                 left -= len(data)
             self._reply(200, b"ok")
+        elif url.path == "/begin":
+            self._reply(200, b"ok")
+            self.server.on_result({"event": "start", "ip": self.client_address[0],
+                                   "device": device_name(self.headers.get("User-Agent", ""))})
         elif url.path == "/result" and length < 4096:
             try:
                 data = json.loads(self.rfile.read(length))
-                result = {"ping": float(data["ping"]), "down": float(data["down"]), "up": float(data["up"]),
+                result = {"event": "result", "ping": float(data["ping"]), "down": float(data["down"]), "up": float(data["up"]),
                           "ip": self.client_address[0], "device": device_name(self.headers.get("User-Agent", "")),
                           "time": time.strftime("%H:%M")}
             except (ValueError, KeyError, TypeError):
