@@ -82,7 +82,8 @@ $ip = Get-NetIPAddress -InterfaceIndex $i -AddressFamily IPv4 | Select-Object -F
 $dhcp = (Get-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4).Dhcp
 $dns = (Get-DnsClientServerAddress -InterfaceIndex $i -AddressFamily IPv4).ServerAddresses
 $a = Get-NetAdapter -InterfaceIndex $i
-[pscustomobject]@{alias=$a.Name; media=[string]$a.PhysicalMediaType; ip=$ip.IPAddress; prefix=$ip.PrefixLength; gateway=$r.NextHop; dhcp=("$dhcp" -eq 'Enabled'); dns=@($dns)} | ConvertTo-Json -Compress
+$vpn = Get-NetAdapter -ErrorAction SilentlyContinue | Where-Object { $_.Status -eq 'Up' -and $_.InterfaceDescription -match 'WireGuard|Wintun|TAP-Windows|OpenVPN|VPN|Tailscale|ZeroTier|NordLynx|Proton' } | Select-Object -First 1 -ExpandProperty Name
+[pscustomobject]@{alias=$a.Name; media=[string]$a.PhysicalMediaType; ip=$ip.IPAddress; prefix=$ip.PrefixLength; gateway=$r.NextHop; dhcp=("$dhcp" -eq 'Enabled'); dns=@($dns); vpn=[string]$vpn} | ConvertTo-Json -Compress
 """
 
 

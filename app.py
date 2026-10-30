@@ -1,5 +1,6 @@
-"""Desktop stat widget: CPU / GPU / RAM, disk and network speed, IP + DNS tools, ping."""
+"""Desktop stat widget: CPU / GPU / RAM, disk and network speed, IP + DNS tools, ping and more."""
 import ipaddress
+import os
 import subprocess
 import sys
 import threading
@@ -8,178 +9,39 @@ import webbrowser
 from collections import deque
 
 import psutil
-from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal, QObject
-from PySide6.QtGui import QColor, QCursor, QPainter, QPainterPath, QPen
+from PySide6.QtCore import QObject, QPoint, QRect, QRectF, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QCursor, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
-    QApplication, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMenu, QMessageBox,
-    QPushButton, QToolButton, QVBoxLayout, QWidget, QLayout,
+    QApplication, QHBoxLayout, QInputDialog, QLayout, QLineEdit, QMenu, QMessageBox,
+    QPushButton, QSystemTrayIcon, QToolTip, QVBoxLayout, QWidget,
 )
 
+import features
+import hotkey
 import sysinfo
+import theme
 import updater
 import winutil
+from theme import P
+from widgets import Bar, IconBtn, Metric, Spark, label
 
-BG, PANEL, LINE = "#14151a", "#1c1e25", "#2a2c35"
-TEXT, DIM = "#e8e9ee", "#8b8fa0"
-BLUE, PURPLE, GREEN, AMBER, RED = "#7f9cff", "#b58cff", "#5fd8a6", "#f0a860", "#f07a7a"
 DNS_PRESETS = {"cloudflare": ["1.1.1.1", "1.0.0.1"], "google": ["8.8.8.8", "8.8.4.4"]}
 MODES = ["full", "compact", "mini"]
-
-STYLE = f"""
-QLabel {{ color:{TEXT}; font-family:'Segoe UI'; font-size:12px; }}
-QLabel[dim="true"] {{ color:{DIM}; font-size:11px; }}
-QLabel[mono="true"] {{ font-family:Consolas; }}
-QToolButton {{ color:{DIM}; background:transparent; border:none; border-radius:6px; padding:2px 5px; font-size:13px; }}
-QToolButton:hover {{ background:{LINE}; }}
-QToolButton:checked {{ color:{BLUE}; background:#232638; }}
-QPushButton {{ color:#c9ccd8; background:{LINE}; border:none; border-radius:8px; padding:5px 10px; font-size:11px; }}
-QPushButton:hover {{ background:#34364a; }}
-QPushButton:checked {{ background:{BLUE}; color:{BG}; }}
-QPushButton[primary="true"] {{ background:{BLUE}; color:{BG}; font-weight:500; }}
-QLineEdit {{ color:{TEXT}; background:{PANEL}; border:0.5px solid {LINE}; border-radius:6px; padding:4px 7px;
-             font-family:Consolas; font-size:12px; }}
-QLineEdit:disabled {{ color:{DIM}; }}
-QMenu {{ background:{PANEL}; color:{TEXT}; border:1px solid {LINE}; }}
-QMenu::item:selected {{ background:{LINE}; }}
-"""
+SHOW_KEYS = (("cpu", "CPU"), ("ram", "RAM"), ("net", "Network speed"), ("disk", "Disk speed"),
+             ("ip", "Local IP and DNS"), ("public", "Public IP"), ("space", "Free disk space"))
+PANELS = (("net", "Network settings"), ("ping", "Ping"), ("hist", "Connection history"),
+          ("speed", "Speed test"), ("proc", "Top processes"))
+SNAP = 14
 
 
-def label(text="", dim=False, mono=False, align=None):
-    lb = QLabel(text)
-    lb.setProperty("dim", dim)
-    lb.setProperty("mono", mono)
-    lb.setAttribute(Qt.WA_TransparentForMouseEvents)
-    if align:
-        lb.setAlignment(align)
-    return lb
-
-
-class Bar(QWidget):
-    def __init__(self, color):
-        super().__init__()
-        self.color, self.v = QColor(color), 0.0
-        self.setFixedHeight(6)
-
-    def set(self, v):
-        self.v = max(0.0, min(1.0, v))
-        self.update()
-
-    def paintEvent(self, _):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing)
-        p.setPen(Qt.NoPen)
-        p.setBrush(QColor(LINE))
-        p.drawRoundedRect(self.rect(), 3, 3)
-        p.setBrush(self.color)
-        p.drawRoundedRect(QRectF(0, 0, self.width() * self.v, self.height()), 3, 3)
-
-
-class Spark(QWidget):
-    def __init__(self, color, height=36, floor=1.0, size=60):
-        super().__init__()
-        self.color, self.floor = QColor(color), floor
-        self.data = deque(maxlen=size)
-        self.setFixedHeight(height)
-
-    def push(self, v):
-        self.data.append(v)
-        self.update()
-
-    def paintEvent(self, _):
-        pts = [v for v in self.data if v is not None]
-        if len(pts) < 2:
-            return
-        top = max(max(pts), self.floor)
-        w, h, n = self.width(), self.height() - 4, self.data.maxlen - 1
-        offset = n - (len(self.data) - 1)
-        p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing)
-        path, started = QPainterPath(), False
-        for i, v in enumerate(self.data):
-            if v is None:
-                started = False
-                continue
-            pt = QPointF((i + offset) * w / n, 2 + h - h * v / top)
-            if started:
-                path.lineTo(pt)
-            else:
-                path.moveTo(pt)
-                started = True
-        p.setPen(QPen(self.color, 1.5))
-        p.drawPath(path)
-
-
-class Metric(QWidget):
-    def __init__(self, name, color):
-        super().__init__()
-        lay = QHBoxLayout(self)
-        lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(8)
-        n = label(name, dim=True)
-        n.setFixedWidth(34)
-        self.bar = Bar(color)
-        self.val = label("–", align=Qt.AlignRight | Qt.AlignVCenter)
-        self.val.setFixedWidth(64)
-        lay.addWidget(n)
-        lay.addWidget(self.bar, 1)
-        lay.addWidget(self.val)
-
-    def set(self, frac, text):
-        self.bar.set(frac)
-        self.val.setText(text)
-
-
-class IconBtn(QToolButton):
-    """Header button with a vector line icon drawn on a 16x16 grid."""
-
-    def __init__(self, kind, tip, checkable=False):
-        super().__init__()
-        self.kind = kind
-        self.setToolTip(tip)
-        self.setCheckable(checkable)
-        self.setCursor(Qt.PointingHandCursor)
-        self.setFixedSize(26, 26)
-
-    def paintEvent(self, _):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing)
-        hover, on = self.underMouse(), self.isChecked()
-        if on or hover:
-            p.setPen(Qt.NoPen)
-            p.setBrush(QColor("#232638" if on else LINE))
-            p.drawRoundedRect(self.rect(), 7, 7)
-        color = QColor(BLUE if on else (TEXT if hover else DIM))
-        p.translate((self.width() - 16) / 2, (self.height() - 16) / 2)
-        pen = QPen(color, 1.4)
-        pen.setCapStyle(Qt.RoundCap)
-        pen.setJoinStyle(Qt.RoundJoin)
-        p.setPen(pen)
-        p.setBrush(Qt.NoBrush)
-        k = self.kind
-        if k == "tools":
-            for x, y in ((2, 2), (9, 2), (2, 9), (9, 9)):
-                p.drawRoundedRect(QRectF(x, y, 5, 5), 1.5, 1.5)
-        elif k == "size":
-            p.drawPolyline([QPointF(2, 6), QPointF(2, 2), QPointF(6, 2)])
-            p.drawPolyline([QPointF(10, 14), QPointF(14, 14), QPointF(14, 10)])
-            p.drawLine(QPointF(2.5, 2.5), QPointF(6.5, 6.5))
-            p.drawLine(QPointF(13.5, 13.5), QPointF(9.5, 9.5))
-        elif k == "pin":
-            p.drawPolygon([QPointF(5.5, 2), QPointF(10.5, 2), QPointF(10, 7), QPointF(12.5, 9.5),
-                           QPointF(3.5, 9.5), QPointF(6, 7)])
-            p.drawLine(QPointF(8, 9.5), QPointF(8, 14))
-        elif k == "menu":
-            p.setPen(Qt.NoPen)
-            p.setBrush(color)
-            for x in (3, 8, 13):
-                p.drawEllipse(QPointF(x, 8), 1.3, 1.3)
-
-
-class PingBridge(QObject):
+class Bridge(QObject):
+    """Carries results from worker threads to the GUI thread."""
     result = Signal(object)
     netdone = Signal()
     update_checked = Signal(object, bool)  # release dict or error string, user-initiated
     update_installed = Signal(object)  # error string or None
+    speed_status = Signal(str)
+    speed_done = Signal(object)  # result dict or error string
 
 
 class Card(QWidget):
@@ -188,46 +50,74 @@ class Card(QWidget):
         self.cfg = winutil.load_config()
         self.mode = self.cfg.get("mode", "full")
         self.pinned = self.cfg.get("pinned", True)
-        self.netinfo = {}
-        self.net_open = self.ping_open = False
+        self.theme_name = self.cfg.get("theme", "auto")
+        self.accent_name = self.cfg.get("accent", "Blue")
+        theme.apply(self.theme_name, self.accent_name)
+        self.show_cfg = {**dict.fromkeys((k for k, _ in SHOW_KEYS), True), **self.cfg.get("show", {})}
+        self.alerts_on = self.cfg.get("alerts", True)
+        self.monitor_on = self.cfg.get("monitor", True)
+        self.hotkey_on = self.cfg.get("hotkey", True)
         self.opacity = self.cfg.get("opacity", 100)
         self.fade = self.cfg.get("fade", True)
         self.idle = self.cfg.get("idle_opacity", 70)
         self.gpu_on = self.cfg.get("gpu", True)
-        self.net_alias = None
+
+        self.netinfo, self.net_alias = {}, None
+        self.public_ip, self.power_plan, self.space_text = None, "", ""
+        self.update_info = None
+        self.open_panel = None
+        self.proc_sort, self.proc_pids, self.proc_names = "cpu", [], []
+        self.speed_running = False
+        self.last_gateway, self.suggested = None, None
+        self.pending_click = None
         self.rates = sysinfo.Rates()
         self.peaks = {"disk": 100e6}
-        self.drag = None
+        self.drag = self.press_global = None
+        self.ticks = 0
         self.ping_stop = None
         self.ping_stats = {"sent": 0, "lost": 0, "samples": deque(maxlen=60)}
-        self.bridge = PingBridge()
+        self.sampler = features.ProcSampler()
+        self.alert_engine = features.Alerts()
+        try:
+            self.has_battery = psutil.sensors_battery() is not None
+        except (AttributeError, OSError):
+            self.has_battery = False
+
+        self.bridge = Bridge()
         self.bridge.result.connect(self.on_ping)
         self.bridge.netdone.connect(self.show_net_config)
         self.bridge.update_checked.connect(self.on_update_checked)
         self.bridge.update_installed.connect(self.on_update_installed)
-        self.update_info = None
-        self.public_ip = None
+        self.bridge.speed_status.connect(lambda t: self.l_speed_status.setText(t))
+        self.bridge.speed_done.connect(self.on_speed_done)
 
         self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setStyleSheet(STYLE)
+        self.setStyleSheet(theme.stylesheet())
         self.build()
         self.apply_flags()
         if "pos" in self.cfg:
             self.move(*self.cfg["pos"])
 
-        self.gpu = None
-        self.m_gpu.setVisible(self.gpu_on)
+        self.gpu = self.pinger = self.hotkey_filter = None
         if self.gpu_on:
             self.start_gpu()
+        if self.monitor_on:
+            self.start_pinger()
+        self.make_tray()
+        self.set_hotkey(self.hotkey_on)
         psutil.cpu_percent()
         self.refresh_net_config()
+        self.refresh_public_ip()
+        self.refresh_power_plan()
         self.timer = QTimer(self, interval=1000, timeout=self.tick)
         self.timer.start()
         QTimer(self, interval=15000, timeout=self.refresh_net_config).start()
-        QTimer(self, interval=120, timeout=self.hover_check).start()
-        QTimer.singleShot(8000, lambda: self.check_updates(manual=False))
-        self.refresh_public_ip()
+        QTimer(self, interval=60000, timeout=self.refresh_power_plan).start()
         QTimer(self, interval=300000, timeout=self.refresh_public_ip).start()
+        QTimer(self, interval=120, timeout=self.hover_check).start()
+        QTimer(self, interval=10000, timeout=self.follow_system_theme).start()
+        QTimer(self, interval=2000, timeout=self.refresh_procs).start()
+        QTimer.singleShot(8000, lambda: self.check_updates(manual=False))
         self.set_mode(self.mode)
 
     # ---------- layout ----------
@@ -242,6 +132,10 @@ class Card(QWidget):
         self.title = label("System")
         self.title.setStyleSheet("font-weight:500; font-size:13px;")
         head.addWidget(self.title, 1)
+        self.l_vpn = label("VPN")
+        self.l_vpn.setStyleSheet(f"color:{P.GREEN}; font-size:10px; font-weight:500; padding:0 6px;")
+        self.l_vpn.hide()
+        head.addWidget(self.l_vpn)
         self.btn_tools = IconBtn("tools", "Tools")
         self.btn_mode = IconBtn("size", "Cycle size: full / compact / mini")
         self.btn_pin = IconBtn("pin", "Always on top", checkable=True)
@@ -259,43 +153,61 @@ class Card(QWidget):
         bl = QVBoxLayout(self.body)
         bl.setContentsMargins(0, 0, 0, 0)
         bl.setSpacing(7)
-        self.m_cpu, self.m_gpu, self.m_ram = Metric("CPU", BLUE), Metric("GPU", PURPLE), Metric("RAM", GREEN)
-        self.m_read, self.m_write = Metric("Read", AMBER), Metric("Write", AMBER)
+        self.m_cpu, self.m_gpu, self.m_ram = Metric("CPU", "ACCENT"), Metric("GPU", "PURPLE"), Metric("RAM", "GREEN")
+        self.m_cpu.setToolTip("Click for top processes")
+        self.m_ram.setToolTip("Click for top processes")
+        self.m_read, self.m_write = Metric("Read", "AMBER"), Metric("Write", "AMBER")
         for m in (self.m_cpu, self.m_gpu, self.m_ram):
             bl.addWidget(m)
-        sep = QWidget()
-        sep.setFixedHeight(1)
-        sep.setStyleSheet(f"background:{LINE};")
-        bl.addWidget(sep)
-        net_row = QHBoxLayout()
+        self.sep = QWidget()
+        self.sep.setFixedHeight(1)
+        bl.addWidget(self.sep)
+        self.net_w = QWidget()
+        nl = QHBoxLayout(self.net_w)
+        nl.setContentsMargins(0, 0, 0, 0)
         self.l_speed = label("↓ 0.0  ↑ 0.0 Mb/s", mono=True)
         self.l_link = label("", dim=True, align=Qt.AlignRight)
-        net_row.addWidget(self.l_speed)
-        net_row.addWidget(self.l_link, 1)
-        bl.addLayout(net_row)
-        self.spark_net = Spark(BLUE)
+        nl.addWidget(self.l_speed)
+        nl.addWidget(self.l_link, 1)
+        bl.addWidget(self.net_w)
+        self.spark_net = Spark("ACCENT")
         bl.addWidget(self.spark_net)
         bl.addWidget(self.m_read)
         bl.addWidget(self.m_write)
         self.l_disk = label("R 0 · W 0 MB/s", mono=True)
-        bl.addWidget(self.l_disk)
+        self.l_space = label("", mono=True)
         self.l_ip = label("", mono=True)
-        bl.addWidget(self.l_ip)
         self.l_pub = label("Public –", mono=True)
-        bl.addWidget(self.l_pub)
+        self.l_batt = label("", mono=True)
+        for w in (self.l_disk, self.l_space, self.l_ip, self.l_pub, self.l_batt):
+            bl.addWidget(w)
         root.addWidget(self.body)
 
-        self.panel_net = self.build_net_panel()
-        self.panel_ping = self.build_ping_panel()
-        for pnl in (self.panel_net, self.panel_ping):
+        self.panels = {"net": self.build_net_panel(), "ping": self.build_ping_panel(),
+                       "hist": self.build_hist_panel(), "speed": self.build_speed_panel(),
+                       "proc": self.build_proc_panel()}
+        for pnl in self.panels.values():
             pnl.setMinimumWidth(330)
             pnl.hide()
             root.addWidget(pnl)
+        self.restyle()
+
+    def restyle(self):
+        """Re-applies palette-dependent styles after a theme or accent change."""
+        self.setStyleSheet(theme.stylesheet())
+        self.sep.setStyleSheet(f"background:{P.LINE};")
+        self.l_vpn.setStyleSheet(f"color:{P.GREEN}; font-size:10px; font-weight:500; padding:0 6px;")
+        for pnl in self.panels.values():
+            pnl.setStyleSheet(f"#panel {{ background:{P.PANEL}; border-radius:12px; }}")
+        self.update()
+        for w in self.findChildren(QWidget):
+            w.update()
+        if hasattr(self, "gpu"):  # past construction: refresh text that has colors baked in
+            self.update_space()
 
     def panel(self):
         w = QWidget()
         w.setObjectName("panel")
-        w.setStyleSheet(f"#panel {{ background:{PANEL}; border-radius:12px; }}")
         lay = QVBoxLayout(w)
         lay.setContentsMargins(10, 10, 10, 10)
         lay.setSpacing(7)
@@ -367,10 +279,73 @@ class Card(QWidget):
             b.clicked.connect(lambda _=False, t=text: self.pick_target(t))
             pre.addWidget(b)
         lay.addLayout(pre)
-        self.spark_ping = Spark(GREEN, height=48, floor=20)
+        self.spark_ping = Spark("GREEN", height=48, floor=20)
         lay.addWidget(self.spark_ping)
         self.l_ping = label("Not running", dim=True)
         lay.addWidget(self.l_ping)
+        return w
+
+    def build_hist_panel(self):
+        w, lay = self.panel()
+        lay.addWidget(label("Connection history · pings to 1.1.1.1, last hour", dim=True))
+        self.spark_hist = Spark("GREEN", height=56, floor=30, size=720)
+        lay.addWidget(self.spark_hist)
+        self.l_hist = label("Collecting…", dim=True)
+        lay.addWidget(self.l_hist)
+        return w
+
+    def build_speed_panel(self):
+        w, lay = self.panel()
+        top = QHBoxLayout()
+        top.addWidget(label("Speed test · Cloudflare", dim=True), 1)
+        self.b_speed = QPushButton("Run test")
+        self.b_speed.setProperty("primary", True)
+        self.b_speed.clicked.connect(self.run_speed)
+        top.addWidget(self.b_speed)
+        lay.addLayout(top)
+        row = QHBoxLayout()
+        self.speed_vals = {}
+        for key, name in (("down", "Download"), ("up", "Upload"), ("ping", "Ping")):
+            col = QVBoxLayout()
+            col.setSpacing(0)
+            col.addWidget(label(name, dim=True))
+            v = label("–")
+            v.setStyleSheet("font-size:18px; font-weight:500;")
+            col.addWidget(v)
+            self.speed_vals[key] = v
+            row.addLayout(col)
+        lay.addLayout(row)
+        self.l_speed_status = label("Uses about 45 MB of data per run.", dim=True)
+        lay.addWidget(self.l_speed_status)
+        return w
+
+    def build_proc_panel(self):
+        w, lay = self.panel()
+        top = QHBoxLayout()
+        top.addWidget(label("Top processes", dim=True), 1)
+        self.b_sort = {}
+        for key, text in (("cpu", "CPU"), ("mem", "RAM")):
+            b = QPushButton(text)
+            b.setCheckable(True)
+            b.setProperty("small", True)
+            b.clicked.connect(lambda _=False, k=key: self.set_proc_sort(k))
+            self.b_sort[key] = b
+            top.addWidget(b)
+        lay.addLayout(top)
+        self.proc_rows = []
+        for i in range(5):
+            row = QHBoxLayout()
+            name, val = label("", mono=True), label("", mono=True, align=Qt.AlignRight | Qt.AlignVCenter)
+            val.setFixedWidth(92)
+            end = QPushButton("End")
+            end.setProperty("small", True)
+            end.clicked.connect(lambda _=False, i=i: self.end_proc(i))
+            row.addWidget(name, 1)
+            row.addWidget(val)
+            row.addWidget(end)
+            lay.addLayout(row)
+            self.proc_rows.append((name, val, end))
+        self.set_proc_sort("cpu")
         return w
 
     # ---------- window behaviour ----------
@@ -390,13 +365,7 @@ class Card(QWidget):
 
     def set_mode(self, mode):
         self.mode = mode
-        mini, full = mode == "mini", mode == "full"
-        self.body.setVisible(not mini)
-        for w in (self.spark_net, self.m_read, self.m_write):
-            w.setVisible(full)
-        self.l_disk.setVisible(mode == "compact")
-        self.panel_net.setVisible(self.net_open)
-        self.panel_ping.setVisible(self.ping_open)
+        mini = mode == "mini"
         self.title.setTextFormat(Qt.RichText if mini else Qt.PlainText)
         self.title.setStyleSheet("font-size:12px;" if mini else "font-weight:500; font-size:13px;")
         if not mini:
@@ -404,29 +373,77 @@ class Card(QWidget):
             self.setToolTip("")
         self.btn_menu.setVisible(not mini)
         self.layout().setContentsMargins(*((10, 4, 6, 4) if mini else (12, 10, 12, 12)))
-        self.body.setFixedWidth(330 if full else 270)
+        self.body.setFixedWidth(330 if mode == "full" else 270)
         self.title.setMinimumWidth(0 if not mini else 330)
-        self.adjustSize()
+        self.apply_visibility()
         self.save()
+
+    def apply_visibility(self):
+        s, mode = self.show_cfg, self.mode
+        full, compact = mode == "full", mode == "compact"
+        self.body.setVisible(mode != "mini")
+        self.m_cpu.setVisible(s["cpu"])
+        self.m_gpu.setVisible(self.gpu_on)
+        self.m_ram.setVisible(s["ram"])
+        self.sep.setVisible(s["cpu"] or s["ram"] or self.gpu_on)
+        self.net_w.setVisible(s["net"])
+        self.spark_net.setVisible(full and s["net"])
+        for w in (self.m_read, self.m_write):
+            w.setVisible(full and s["disk"])
+        self.l_disk.setVisible(compact and s["disk"])
+        self.l_ip.setVisible(s["ip"])
+        self.l_pub.setVisible(s["public"])
+        self.l_space.setVisible(s["space"] and bool(self.space_text))
+        self.l_batt.setVisible(self.has_battery)
+        self.l_vpn.setVisible(bool(self.netinfo.get("vpn")) and mode != "mini")
+        for key, pnl in self.panels.items():
+            pnl.setVisible(self.open_panel == key)
+        self.adjustSize()
 
     def paintEvent(self, _):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
-        p.setPen(QPen(QColor("#3a3d4c"), 1))
-        p.setBrush(QColor(BG))
+        p.setPen(QPen(QColor(P.BORDER), 1))
+        p.setBrush(QColor(P.BG))
         p.drawRoundedRect(QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5), 16, 16)
 
     def mousePressEvent(self, e):
         if e.button() == Qt.LeftButton:
-            self.drag = e.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            self.press_global = e.globalPosition().toPoint()
+            self.drag = self.press_global - self.frameGeometry().topLeft()
 
     def mouseMoveEvent(self, e):
-        if self.drag is not None and e.buttons() & Qt.LeftButton:
-            self.move(e.globalPosition().toPoint() - self.drag)
+        if self.drag is None or not e.buttons() & Qt.LeftButton:
+            return
+        pos = e.globalPosition().toPoint() - self.drag
+        screen = QApplication.screenAt(e.globalPosition().toPoint()) or self.screen()
+        area, w, h = screen.availableGeometry(), self.width(), self.height()
+        x, y = pos.x(), pos.y()
+        if abs(x - area.left()) < SNAP:
+            x = area.left()
+        elif abs(x + w - area.right() - 1) < SNAP:
+            x = area.right() + 1 - w
+        if abs(y - area.top()) < SNAP:
+            y = area.top()
+        elif abs(y + h - area.bottom() - 1) < SNAP:
+            y = area.bottom() + 1 - h
+        self.move(x, y)
 
-    def mouseReleaseEvent(self, _):
-        self.drag = None
+    def mouseReleaseEvent(self, e):
+        moved = (e.globalPosition().toPoint() - self.press_global).manhattanLength() if self.press_global else 99
+        self.drag = self.press_global = None
+        if moved < 4 and e.button() == Qt.LeftButton:
+            self.handle_click(e.position().toPoint())
         self.save()
+
+    def handle_click(self, pos):
+        targets = ((self.l_ip, self.copy_local), (self.l_pub, self.copy_public),
+                   (self.m_cpu, lambda: self.show_panel("proc", "cpu")),
+                   (self.m_ram, lambda: self.show_panel("proc", "mem")))
+        for widget, action in targets:
+            if widget.isVisible() and QRect(widget.mapTo(self, QPoint(0, 0)), widget.size()).contains(pos):
+                action()
+                return
 
     def mouseDoubleClickEvent(self, _):
         self.set_mode(MODES[(MODES.index(self.mode) + 1) % 3])
@@ -434,30 +451,62 @@ class Card(QWidget):
     def contextMenuEvent(self, e):
         self.show_menu(e.globalPos())
 
+    def copy_text(self, text, what):
+        if text:
+            QApplication.clipboard().setText(text)
+            QToolTip.showText(QCursor.pos(), f"Copied {what} {text}", self)
+
+    def copy_local(self):
+        self.copy_text(self.netinfo.get("ip"), "local IP")
+
+    def copy_public(self):
+        self.copy_text(self.public_ip, "public IP")
+
+    def hover_check(self, force=False):
+        under = (self.drag is not None or self.frameGeometry().contains(QCursor.pos())
+                 or QApplication.activePopupWidget() is not None
+                 or QApplication.activeModalWidget() is not None)
+        pct = self.opacity if (under or not self.fade) else min(self.opacity, self.idle)
+        if force or abs(self.windowOpacity() - pct / 100) > 0.01:
+            self.setWindowOpacity(pct / 100)
+
+    # ---------- menus ----------
+    def add_check(self, menu, text, on, fn):
+        act = menu.addAction(text)
+        act.setCheckable(True)
+        act.setChecked(on)
+        act.triggered.connect(fn)
+        return act
+
     def show_menu(self, pos):
         menu = QMenu(self)
-        start = menu.addAction("Start with Windows")
-        start.setCheckable(True)
-        start.setChecked(winutil.startup_enabled())
-        start.triggered.connect(self.toggle_startup)
-        ops = menu.addMenu("Opacity")
+        look = menu.addMenu("Appearance")
+        th = look.addMenu("Theme")
+        for name in theme.THEMES:
+            self.add_check(th, name.capitalize(), self.theme_name == name, lambda _=False, n=name: self.set_theme(mode=n))
+        ac = look.addMenu("Accent color")
+        for name in theme.ACCENTS:
+            self.add_check(ac, name, self.accent_name == name, lambda _=False, n=name: self.set_theme(accent=n))
+        look.addSeparator()
+        ops = look.addMenu("Opacity")
         for pct in (100, 85, 70):
-            act = ops.addAction(f"{pct}%", lambda p=pct: self.set_opacity(opacity=p))
-            act.setCheckable(True)
-            act.setChecked(self.opacity == pct)
-        fade = menu.addAction("Fade when cursor is away")
-        fade.setCheckable(True)
-        fade.setChecked(self.fade)
-        fade.triggered.connect(lambda on: self.set_opacity(fade=on))
-        idle = menu.addMenu("Faded opacity")
+            self.add_check(ops, f"{pct}%", self.opacity == pct, lambda _=False, p=pct: self.set_opacity(opacity=p))
+        self.add_check(look, "Fade when cursor is away", self.fade, lambda on: self.set_opacity(fade=on))
+        idle = look.addMenu("Faded opacity")
         for pct in (30, 50, 70):
-            act = idle.addAction(f"{pct}%", lambda p=pct: self.set_opacity(idle=p))
-            act.setCheckable(True)
-            act.setChecked(self.idle == pct)
-        show_gpu = menu.addAction("Show GPU (uses extra CPU and RAM)")
-        show_gpu.setCheckable(True)
-        show_gpu.setChecked(self.gpu_on)
-        show_gpu.triggered.connect(self.set_gpu)
+            self.add_check(idle, f"{pct}%", self.idle == pct, lambda _=False, p=pct: self.set_opacity(idle=p))
+
+        shown = menu.addMenu("Show")
+        for key, text in SHOW_KEYS:
+            self.add_check(shown, text, self.show_cfg[key], lambda on, k=key: self.set_show(k, on))
+        self.add_check(shown, "GPU (uses extra CPU and RAM)", self.gpu_on, self.set_gpu)
+
+        beh = menu.addMenu("Behavior")
+        self.add_check(beh, "Start with Windows", winutil.startup_enabled(), self.toggle_startup)
+        self.add_check(beh, "Alerts (CPU, RAM, disk, connection)", self.alerts_on, self.set_alerts)
+        self.add_check(beh, "Connection monitor (pings 1.1.1.1)", self.monitor_on, self.set_monitor)
+        self.add_check(beh, "Show or hide with Ctrl+Alt+W", self.hotkey_on, self.set_hotkey_pref)
+
         menu.addSeparator()
         if self.update_info:
             menu.addAction(f"Update to {self.update_info['tag']}…", self.prompt_update)
@@ -470,32 +519,37 @@ class Card(QWidget):
 
     def show_tools(self, pos):
         menu = QMenu(self)
-        for text, attr in (("Network settings", "net_open"), ("Ping", "ping_open")):
-            act = menu.addAction(text)
-            act.setCheckable(True)
-            act.setChecked(getattr(self, attr))
-            act.triggered.connect(lambda on, a=attr: self.toggle_panel(a, on))
+        for key, text in PANELS:
+            self.add_check(menu, text, self.open_panel == key, lambda on, k=key: self.show_panel(k if on else None))
         menu.exec(pos)
 
-    def toggle_panel(self, attr, on):
-        setattr(self, attr, on)
-        self.panel_net.setVisible(self.net_open)
-        self.panel_ping.setVisible(self.ping_open)
-        self.adjustSize()
+    def show_panel(self, key, sort=None):
+        self.open_panel = key
+        if sort:
+            self.set_proc_sort(sort)
+        self.apply_visibility()
+        if key == "proc":
+            self.refresh_procs()
+        elif key == "hist":
+            self.refresh_hist()
 
-    def start_gpu(self):
-        self.gpu = sysinfo.GpuReader()
-        self.gpu.start()
+    # ---------- settings ----------
+    def set_theme(self, mode=None, accent=None):
+        if mode:
+            self.theme_name = mode
+        if accent:
+            self.accent_name = accent
+        theme.apply(self.theme_name, self.accent_name)
+        self.restyle()
+        self.save()
 
-    def set_gpu(self, on):
-        self.gpu_on = on
-        if on:
-            self.start_gpu()
-        elif self.gpu:
-            self.gpu.stop()
-            self.gpu = None
-        self.m_gpu.setVisible(on)
-        self.adjustSize()
+    def follow_system_theme(self):
+        if self.theme_name == "auto" and theme.resolve("auto") != P.RESOLVED:
+            self.set_theme()
+
+    def set_show(self, key, on):
+        self.show_cfg[key] = on
+        self.apply_visibility()
         self.save()
 
     def set_opacity(self, opacity=None, fade=None, idle=None):
@@ -508,66 +562,61 @@ class Card(QWidget):
         self.hover_check(force=True)
         self.save()
 
-    def hover_check(self, force=False):
-        under = (self.drag is not None or self.frameGeometry().contains(QCursor.pos())
-                 or QApplication.activePopupWidget() is not None
-                 or QApplication.activeModalWidget() is not None)
-        pct = self.opacity if (under or not self.fade) else min(self.opacity, self.idle)
-        if force or abs(self.windowOpacity() - pct / 100) > 0.01:
-            self.setWindowOpacity(pct / 100)
+    def start_gpu(self):
+        self.gpu = sysinfo.GpuReader()
+        self.gpu.start()
 
-    def check_updates(self, manual):
-        def work():
-            try:
-                self.bridge.update_checked.emit(updater.latest_release(), manual)
-            except (updater.UpdateError, ValueError) as err:
-                self.bridge.update_checked.emit(str(err) or "Couldn't read the release info.", manual)
-        threading.Thread(target=work, daemon=True).start()
-
-    def on_update_checked(self, result, manual):
-        if isinstance(result, str):  # error
-            if manual:
-                QMessageBox.information(self, "Updates", result)
-            return
-        if updater.is_newer(result["tag"]):
-            self.update_info = result
-            if manual:
-                self.prompt_update()
-        else:
-            self.update_info = None
-            if manual:
-                QMessageBox.information(self, "Updates", f"You're up to date (version {updater.VERSION}).")
-
-    def prompt_update(self):
-        info = self.update_info
-        if not info:
-            return
-        if updater.in_git_checkout():
-            if QMessageBox.question(self, "Update available", f"{info['tag']} is available. This copy is a git "
-                                    "checkout, so update it with git pull. Open the release page?") == QMessageBox.Yes:
-                webbrowser.open(info["page"])
-            return
-        notes = info["notes"].strip()[:400]
-        box = QMessageBox.question(self, "Update available", f"Version {info['tag']} is available "
-                                   f"(you have {updater.VERSION}).\n\n{notes}\n\nInstall it and restart?")
-        if box != QMessageBox.Yes:
-            return
-
-        def work():
-            try:
-                updater.install(info["zip"])
-                self.bridge.update_installed.emit(None)
-            except (updater.UpdateError, OSError) as err:
-                self.bridge.update_installed.emit(str(err))
-        threading.Thread(target=work, daemon=True).start()
-
-    def on_update_installed(self, err):
-        if err:
-            QMessageBox.warning(self, "Updates", f"Update failed. {err}")
-            return
+    def set_gpu(self, on):
+        self.gpu_on = on
+        if on:
+            self.start_gpu()
+        elif self.gpu:
+            self.gpu.stop()
+            self.gpu = None
+        self.apply_visibility()
         self.save()
-        subprocess.Popen([sys.executable, os.path.join(updater.APP_DIR, "app.py")], cwd=updater.APP_DIR)
-        self.quit()
+
+    def start_pinger(self):
+        self.pinger = features.Pinger()
+        self.pinger.start()
+
+    def set_monitor(self, on):
+        self.monitor_on = on
+        if on and not self.pinger:
+            self.start_pinger()
+        elif not on and self.pinger:
+            self.pinger.stop()
+            self.pinger = None
+        self.save()
+
+    def set_alerts(self, on):
+        self.alerts_on = on
+        self.save()
+
+    def set_hotkey(self, on):
+        if self.hotkey_filter:
+            QApplication.instance().removeNativeEventFilter(self.hotkey_filter)
+            self.hotkey_filter.unregister()
+            self.hotkey_filter = None
+        if on:
+            hk = hotkey.Hotkey(self.toggle_visible)
+            if hk.ok:
+                self.hotkey_filter = hk
+                QApplication.instance().installNativeEventFilter(hk)
+
+    def set_hotkey_pref(self, on):
+        self.hotkey_on = on
+        self.set_hotkey(on)
+        if on and not self.hotkey_filter:
+            QMessageBox.information(self, "Hotkey", "Ctrl+Alt+W is already used by another app.")
+        self.save()
+
+    def toggle_visible(self):
+        if self.isVisible():
+            self.hide()
+        else:
+            self.show()
+            self.raise_()
 
     def toggle_startup(self, on):
         try:
@@ -578,7 +627,9 @@ class Card(QWidget):
     def save(self):
         self.cfg.update(mode=self.mode, pinned=self.pinned, pos=[self.x(), self.y()],
                         ping_target=self.f_target.text().strip() or "1.1.1.1",
-                        opacity=self.opacity, fade=self.fade, idle_opacity=self.idle, gpu=self.gpu_on)
+                        opacity=self.opacity, fade=self.fade, idle_opacity=self.idle, gpu=self.gpu_on,
+                        theme=self.theme_name, accent=self.accent_name, show=self.show_cfg,
+                        alerts=self.alerts_on, monitor=self.monitor_on, hotkey=self.hotkey_on)
         winutil.save_config(self.cfg)
 
     def quit(self):
@@ -587,10 +638,49 @@ class Card(QWidget):
             self.ping_stop.set()
         if self.gpu:
             self.gpu.stop()
+        if self.pinger:
+            self.pinger.stop()
+        if self.hotkey_filter:
+            self.hotkey_filter.unregister()
+        self.tray.hide()
         QApplication.quit()
+
+    # ---------- tray and notifications ----------
+    def make_tray(self):
+        pix = QPixmap(32, 32)
+        pix.fill(Qt.transparent)
+        p = QPainter(pix)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setBrush(QColor("#14151a"))
+        p.setPen(Qt.NoPen)
+        p.drawRoundedRect(1, 1, 30, 30, 8, 8)
+        for i, (h, c) in enumerate(((12, "#7f9cff"), (20, "#5fd8a6"), (8, "#f0a860"))):
+            p.setBrush(QColor(c))
+            p.drawRoundedRect(6 + i * 8, 26 - h, 5, h, 2, 2)
+        p.end()
+        self.tray = QSystemTrayIcon(QIcon(pix), self)
+        self.tray.setToolTip("Desktop stat widget")
+        menu = QMenu()
+        menu.addAction("Show or hide", self.toggle_visible)
+        menu.addAction("Quit", self.quit)
+        self.tray_menu = menu
+        self.tray.setContextMenu(menu)
+        self.tray.activated.connect(lambda reason: self.toggle_visible() if reason == QSystemTrayIcon.Trigger else None)
+        self.tray.messageClicked.connect(self.on_tray_clicked)
+        self.tray.show()
+
+    def notify(self, title, msg, on_click=None):
+        self.pending_click = on_click
+        self.tray.showMessage(title, msg, QSystemTrayIcon.Information, 8000)
+
+    def on_tray_clicked(self):
+        if self.pending_click:
+            self.pending_click()
+            self.pending_click = None
 
     # ---------- live stats ----------
     def tick(self):
+        self.ticks += 1
         cpu = psutil.cpu_percent()
         ram = psutil.virtual_memory()
         gpu = self.gpu.value if self.gpu else -1
@@ -610,21 +700,70 @@ class Card(QWidget):
         self.spark_net.push(down)
         self.l_disk.setText(f"R {rd / 1e6:.0f} · W {wr / 1e6:.0f} MB/s")
         self.l_pub.setText(f"Public {self.public_ip or '–'}")
+        if self.ticks % 30 == 1:
+            self.update_space()
+        battery = self.update_battery()
 
+        if self.alerts_on:
+            samples = self.pinger.recent(12) if self.pinger else []
+            for title, msg in self.alert_engine.tick(cpu, ram.percent, samples, battery):
+                self.notify(title, msg)
+        if self.open_panel == "hist":
+            self.refresh_hist()
         if self.mode == "mini":
-            gtxt = f"{gpu}%" if gpu >= 0 else "n/a"
+            self.update_mini(cpu, gpu, ram.percent, down, up, rd, wr)
 
-            def item(name, color, value):
-                return f"<span style='color:{color}'>{name}</span>&nbsp;<b>{value}</b>"
-            sep = f"<span style='color:{LINE}'>&nbsp;│&nbsp;</span>"
-            self.title.setText(sep.join([
-                item("CPU", BLUE,f"{cpu:.0f}%"),
-                *([item("GPU", PURPLE, gtxt)] if self.gpu_on else []),
-                item("RAM", GREEN,f"{ram.percent:.0f}%"),
-                item("↓", BLUE, f"{down:.0f}") + "&nbsp;" + item("↑", BLUE, f"{up:.0f}"),
-                item("R", AMBER, f"{rd / 1e6:.0f}") + "&nbsp;" + item("W", AMBER, f"{wr / 1e6:.0f}"),
-            ]))
-            self.setToolTip("CPU · GPU · RAM · network down/up Mb/s · disk read/write MB/s")
+    def update_mini(self, cpu, gpu, ram_pct, down, up, rd, wr):
+        def item(name, color, value):
+            return f"<span style='color:{color}'>{name}</span>&nbsp;<b>{value}</b>"
+        s = self.show_cfg
+        parts = []
+        if s["cpu"]:
+            parts.append(item("CPU", P.ACCENT, f"{cpu:.0f}%"))
+        if self.gpu_on:
+            parts.append(item("GPU", P.PURPLE, f"{gpu}%" if gpu >= 0 else "n/a"))
+        if s["ram"]:
+            parts.append(item("RAM", P.GREEN, f"{ram_pct:.0f}%"))
+        if s["net"]:
+            parts.append(item("↓", P.ACCENT, f"{down:.0f}") + "&nbsp;" + item("↑", P.ACCENT, f"{up:.0f}"))
+        if s["disk"]:
+            parts.append(item("R", P.AMBER, f"{rd / 1e6:.0f}") + "&nbsp;" + item("W", P.AMBER, f"{wr / 1e6:.0f}"))
+        if self.netinfo.get("vpn"):
+            parts.append(f"<span style='color:{P.GREEN}'><b>VPN</b></span>")
+        sep = f"<span style='color:{P.LINE}'>&nbsp;│&nbsp;</span>"
+        self.title.setText(sep.join(parts) or "System")
+        self.setToolTip("CPU · GPU · RAM · network down/up Mb/s · disk read/write MB/s")
+
+    def update_space(self):
+        drives = list(features.fixed_drives())[:3]
+        parts = []
+        for mount, total, free in drives:
+            color = P.RED if total and free / total < 0.10 else P.TEXT
+            parts.append(f"<span style='color:{color}'>{mount[:2]} {free / 2**30:.0f}G</span>")
+        self.space_text = " · ".join(parts)
+        self.l_space.setText(f"<span style='color:{P.DIM}'>Free</span>&nbsp;" + self.space_text if parts else "")
+        self.l_space.setVisible(self.show_cfg["space"] and bool(parts) and self.mode != "mini")
+
+    def update_battery(self):
+        if not self.has_battery:
+            return None
+        try:
+            b = psutil.sensors_battery()
+        except (AttributeError, OSError):
+            return None
+        if b:
+            state = "charging" if b.power_plugged else "on battery"
+            plan = f" · {self.power_plan}" if self.power_plan else ""
+            self.l_batt.setText(f"Battery {b.percent:.0f}% · {state}{plan}")
+        return b
+
+    def refresh_power_plan(self):
+        if not self.has_battery:
+            return
+
+        def work():
+            self.power_plan = features.power_plan()
+        threading.Thread(target=work, daemon=True).start()
 
     def refresh_public_ip(self):
         def work():
@@ -648,9 +787,103 @@ class Card(QWidget):
         self.l_link.setText(f"{sysinfo.link_kind(c)} · {'DHCP' if c.get('dhcp') else 'Static'}")
         dns = c.get("dns") or []
         self.l_ip.setText(f"{c.get('ip', '?')} · DNS {dns[0] if dns else '–'}")
+        self.l_ip.setToolTip("Click to copy")
+        self.l_pub.setToolTip("Click to copy")
+        self.l_vpn.setVisible(bool(c.get("vpn")) and self.mode != "mini")
+        self.l_vpn.setToolTip(f"VPN active: {c.get('vpn', '')}")
         self.net_title.setText(f"Network settings · {c.get('alias', '')}")
         if not self.f_ip.isModified() and not self.f_ip.hasFocus():
             self.load_form()
+        self.suggest_profile()
+
+    def suggest_profile(self):
+        """Offers a saved profile when the gateway matches one. Never applies it (that needs admin)."""
+        gw = self.netinfo.get("gateway")
+        if not self.alerts_on or not gw or gw == self.last_gateway:
+            return
+        self.last_gateway = gw
+        for name, d in self.cfg.get("profiles", {}).items():
+            same_settings = d["static"] == (not self.netinfo.get("dhcp")) and d["ip"] == self.netinfo.get("ip")
+            if d.get("gw") == gw and not same_settings and self.suggested != (gw, name):
+                self.suggested = (gw, name)
+                self.notify("Network profile", f"This network matches your profile '{name}'. Click to review it.",
+                            lambda n=name: (self.show_panel("net"), self.load_profile(n)))
+                return
+
+    # ---------- top processes ----------
+    def set_proc_sort(self, key):
+        self.proc_sort = key
+        for k, b in self.b_sort.items():
+            b.setChecked(k == key)
+
+    def refresh_procs(self):
+        if self.open_panel != "proc":
+            return
+        rows = self.sampler.top(self.proc_sort)
+        self.proc_pids = [g["pids"] for g in rows] + [[]] * 5
+        self.proc_names = [g["name"] for g in rows] + [""] * 5
+        for i, (name, val, end) in enumerate(self.proc_rows):
+            if i < len(rows):
+                g = rows[i]
+                count = f" ×{len(g['pids'])}" if len(g["pids"]) > 1 else ""
+                name.setText(f"{g['name'][:22]}{count}")
+                val.setText(f"{g['cpu']:.0f}% · {g['mem'] / 2**20:.0f} MB")
+            for w in (name, val, end):
+                w.setVisible(i < len(rows))
+
+    def end_proc(self, i):
+        pids, name = self.proc_pids[i], self.proc_names[i]
+        if not pids:
+            return
+        if name.lower() in features.PROTECTED:
+            QMessageBox.information(self, "Top processes", f"{name} is part of Windows, so it can't be ended here.")
+            return
+        count = f" ({len(pids)} processes)" if len(pids) > 1 else ""
+        if QMessageBox.question(self, "End process", f"End {name}{count}? Unsaved work in it will be lost.") != QMessageBox.Yes:
+            return
+        failed = features.end_processes(pids)
+        if failed:
+            QMessageBox.warning(self, "End process", f"{failed} process(es) couldn't be ended. They may need admin rights.")
+
+    # ---------- connection history and speed test ----------
+    def refresh_hist(self):
+        if not self.pinger:
+            self.l_hist.setText("Connection monitor is off. Turn it on in the menu under Behavior.")
+            return
+        hist = list(self.pinger.history)
+        self.spark_hist.load(hist)
+        ok = [h for h in hist if h is not None]
+        if hist:
+            loss = 100 * (len(hist) - len(ok)) / len(hist)
+            avg = f"{sum(ok) / len(ok):.0f}" if ok else "–"
+            peak = f"{max(ok):.0f}" if ok else "–"
+            self.l_hist.setText(f"{len(hist) * 5 // 60} min · avg {avg} ms · max {peak} ms · loss {loss:.0f}%")
+
+    def run_speed(self):
+        if self.speed_running:
+            return
+        self.speed_running = True
+        self.b_speed.setText("Running…")
+        for v in self.speed_vals.values():
+            v.setText("–")
+
+        def work():
+            try:
+                self.bridge.speed_done.emit(features.run_speedtest(self.bridge.speed_status.emit))
+            except (OSError, ValueError) as err:
+                self.bridge.speed_done.emit(f"Test failed. {err}")
+        threading.Thread(target=work, daemon=True).start()
+
+    def on_speed_done(self, result):
+        self.speed_running = False
+        self.b_speed.setText("Run test")
+        if isinstance(result, str):
+            self.l_speed_status.setText(result)
+            return
+        self.speed_vals["down"].setText(f"{result['down']:.0f} Mb/s")
+        self.speed_vals["up"].setText(f"{result['up']:.0f} Mb/s")
+        self.speed_vals["ping"].setText(f"{result['ping']:.0f} ms" if result["ping"] is not None else "–")
+        self.l_speed_status.setText("Done. Uses about 45 MB of data per run.")
 
     # ---------- IP / DNS settings ----------
     def load_form(self):
@@ -814,12 +1047,67 @@ class Card(QWidget):
         loss = 100 * s["lost"] / s["sent"]
         self.l_ping.setText(f"Now {now} · avg {avg} · max {peak} · loss {loss:.0f}%")
 
+    # ---------- updates ----------
+    def check_updates(self, manual):
+        def work():
+            try:
+                self.bridge.update_checked.emit(updater.latest_release(), manual)
+            except (updater.UpdateError, ValueError) as err:
+                self.bridge.update_checked.emit(str(err) or "Couldn't read the release info.", manual)
+        threading.Thread(target=work, daemon=True).start()
+
+    def on_update_checked(self, result, manual):
+        if isinstance(result, str):  # error
+            if manual:
+                QMessageBox.information(self, "Updates", result)
+            return
+        if updater.is_newer(result["tag"]):
+            self.update_info = result
+            if manual:
+                self.prompt_update()
+        else:
+            self.update_info = None
+            if manual:
+                QMessageBox.information(self, "Updates", f"You're up to date (version {updater.VERSION}).")
+
+    def prompt_update(self):
+        info = self.update_info
+        if not info:
+            return
+        if updater.in_git_checkout():
+            if QMessageBox.question(self, "Update available", f"{info['tag']} is available. This copy is a git "
+                                    "checkout, so update it with git pull. Open the release page?") == QMessageBox.Yes:
+                webbrowser.open(info["page"])
+            return
+        notes = info["notes"].strip()[:400]
+        box = QMessageBox.question(self, "Update available", f"Version {info['tag']} is available "
+                                   f"(you have {updater.VERSION}).\n\n{notes}\n\nInstall it and restart?")
+        if box != QMessageBox.Yes:
+            return
+
+        def work():
+            try:
+                updater.install(info["zip"])
+                self.bridge.update_installed.emit(None)
+            except (updater.UpdateError, OSError) as err:
+                self.bridge.update_installed.emit(str(err))
+        threading.Thread(target=work, daemon=True).start()
+
+    def on_update_installed(self, err):
+        if err:
+            QMessageBox.warning(self, "Updates", f"Update failed. {err}")
+            return
+        self.save()
+        subprocess.Popen([sys.executable, os.path.join(updater.APP_DIR, "app.py")], cwd=updater.APP_DIR)
+        self.quit()
+
 
 def main():
     app = QApplication(sys.argv)
+    app.setQuitOnLastWindowClosed(False)
     card = Card()
     if "--selftest" in sys.argv:
-        QTimer.singleShot(7000,lambda: (print("ok", card.l_ip.text(), card.m_cpu.val.text(), card.m_gpu.val.text()), card.quit()))
+        QTimer.singleShot(7000, lambda: (print("ok", card.l_ip.text(), card.m_cpu.val.text(), card.m_gpu.val.text()), card.quit()))
     sys.exit(app.exec())
 
 

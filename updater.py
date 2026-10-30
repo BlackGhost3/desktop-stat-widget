@@ -8,7 +8,7 @@ import urllib.parse
 import urllib.request
 import zipfile
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 REPO = "BlackGhost3/desktop-stat-widget"
 API = f"https://api.github.com/repos/{REPO}/releases/latest"
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
