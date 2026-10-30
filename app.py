@@ -12,7 +12,7 @@ import psutil
 from PySide6.QtCore import QObject, QPoint, QRect, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QCursor, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
-    QApplication, QHBoxLayout, QInputDialog, QLayout, QLineEdit, QMenu, QMessageBox,
+    QApplication, QBoxLayout, QHBoxLayout, QInputDialog, QLayout, QLineEdit, QMenu, QMessageBox,
     QPushButton, QSystemTrayIcon, QToolTip, QVBoxLayout, QWidget,
 )
 
@@ -153,7 +153,7 @@ class Card(QWidget):
         root.setSpacing(8)
         root.setSizeConstraint(QLayout.SetFixedSize)
 
-        head = QHBoxLayout()
+        head = self.head = QHBoxLayout()
         head.setSpacing(2)
         self.title = label("System")
         self.title.setStyleSheet("font-weight:500; font-size:13px;")
@@ -525,8 +525,10 @@ class Card(QWidget):
             self.setToolTip("")
         self.title.setVisible(not vertical)
         self.btn_menu.setVisible(not mini)
+        self.head.setDirection(QBoxLayout.TopToBottom if vertical else QBoxLayout.LeftToRight)
         for b in (self.btn_tools, self.btn_mode, self.btn_pin):
-            b.resize_to(22 if vertical else 26)
+            b.resize_to(24 if vertical else 26)
+            self.head.setAlignment(b, Qt.AlignHCenter if vertical else Qt.AlignLeft)
         margins = (8, 8, 8, 10) if vertical else ((10, 4, 6, 4) if mini else (12, 10, 12, 12))
         self.layout().setContentsMargins(*margins)
         self.title.setMinimumWidth(330 if mini and not vertical else 0)
