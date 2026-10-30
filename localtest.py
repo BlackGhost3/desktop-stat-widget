@@ -73,16 +73,20 @@ function show(v,phase,color){$('num').textContent=v<100?v.toFixed(1):Math.round(
 $('arc').setAttribute('stroke',color);$('arc').setAttribute('stroke-dasharray',(376.99*frac(v))+' 502.65')}
 async function ping(){const s=[];for(let i=0;i<12;i++){const t=performance.now();await fetch(q('/ping'),{cache:'no-store'});s.push(performance.now()-t)}
 s.shift();s.sort((a,b)=>a-b);return s[s.length>>1]}
-async function down(){const dur=7000,t0=performance.now();let bytes=0;const ctl=new AbortController();
+async function down(){const dur=7000,t0=performance.now();let bytes=0,rep=0;const ctl=new AbortController();
 const worker=async()=>{try{while(performance.now()-t0<dur){const r=await fetch(q('/down?size=50000000'),{cache:'no-store',signal:ctl.signal});
 const rd=r.body.getReader();for(;;){const{done,value}=await rd.read();if(done)break;bytes+=value.length;const el=performance.now()-t0;
-if(el>=dur){ctl.abort();return}if(el>300)show(bytes*8/el/1e3,'Download','#7f9cff')}}}catch(e){}};
+if(el>=dur){ctl.abort();return}if(el>300){const v=bytes*8/el/1e3;show(v,'Download','#7f9cff');
+if(performance.now()-rep>250){rep=performance.now();fetch(q('/live?phase=down&mbps='+v.toFixed(1)),{cache:'no-store'}).catch(()=>{})}}}}}catch(e){}};
 await Promise.all([worker(),worker(),worker(),worker()]);return bytes*8/(performance.now()-t0)/1e3}
 function up(){return new Promise(res=>{const dur=7000,n=3,t0=performance.now(),sent=[0,0,0],blob=new Blob([new Uint8Array(4e6)]);let fin=0;
 const total=()=>sent[0]+sent[1]+sent[2];
-const run=i=>{if(performance.now()-t0>=dur){if(++fin===n)res(total()*8/(performance.now()-t0)/1e3);return}
+const poll=setInterval(async()=>{try{const j=await(await fetch(q('/rate'),{cache:'no-store'})).json();if(j.up>0)show(j.up,'Upload','#b58cff')}catch(e){}},250);
+const finish=async()=>{clearInterval(poll);const own=total()*8/(performance.now()-t0)/1e3;
+try{const j=await(await fetch(q('/rate?final=1'),{cache:'no-store'})).json();res(j.up>0?j.up:own)}catch(e){res(own)}};
+const run=i=>{if(performance.now()-t0>=dur){if(++fin===n)finish();return}
 const x=new XMLHttpRequest();x.open('POST',q('/up'));let last=0;
-x.upload.onprogress=e=>{sent[i]+=e.loaded-last;last=e.loaded;const el=performance.now()-t0;if(el>300)show(total()*8/el/1e3,'Upload','#b58cff');if(el>=dur+400)x.abort()};
+x.upload.onprogress=e=>{sent[i]+=e.loaded-last;last=e.loaded;if(performance.now()-t0>=dur+400)x.abort()};
 x.onload=x.onerror=x.onabort=()=>run(i);x.send(blob)};for(let i=0;i<n;i++)run(i)})}
 async function main(){document.body.classList.remove('done');fetch(q('/begin')).catch(()=>{});$('go').disabled=true;['tp','td','tu'].forEach(i=>$(i).textContent='–');$('msg').textContent='Testing…';
 try{show(0,'Ping','#7f9cff');const p=await ping();$('tp').textContent=p.toFixed(0)+' ms';
@@ -124,21 +128,42 @@ def lan_ip():
 
 
 class _Meter:
-    """Counts the bytes the server really moves, so the PC can show the test live."""
+    """Counts bytes as they cross the server, in phases (a phase starts after a pause in traffic).
+
+    Upload is measured here because the server is the receiving end. Download is measured by the phone,
+    which is the receiving end for that direction. Counting at the receiver is what keeps both honest:
+    a sender's counter runs ahead while data is still sitting in socket buffers."""
+
+    GAP, LIVE = 1.0, 0.6
 
     def __init__(self):
         self.lock = threading.Lock()
-        self.total = {"down": 0, "up": 0}
         self.ip = {"down": "", "up": ""}
+        self.start = {"down": 0.0, "up": 0.0}
+        self.last = {"down": 0.0, "up": 0.0}
+        self.bytes = {"down": 0, "up": 0}
 
     def add(self, kind, n, ip):
+        now = time.time()
         with self.lock:
-            self.total[kind] += n
-            self.ip[kind] = ip
+            if now - self.last[kind] > self.GAP:
+                self.start[kind], self.bytes[kind] = now, 0
+            self.bytes[kind] += n
+            self.last[kind], self.ip[kind] = now, ip
 
-    def snapshot(self):
+    def active(self, kind):
         with self.lock:
-            return dict(self.total), dict(self.ip)
+            return self.bytes[kind] > 0 and time.time() - self.last[kind] < self.LIVE
+
+    def rate(self, kind):
+        """Average Mb/s from the phase's first byte to its latest, the way the page averages its own.
+
+        Measuring to the latest byte (not to "now") keeps the number steady once traffic stops."""
+        with self.lock:
+            if not self.bytes[kind]:
+                return 0.0
+            elapsed = self.last[kind] - self.start[kind]
+            return self.bytes[kind] * 8 / elapsed / 1e6 if elapsed > 0.3 else 0.0
 
 
 class _Server(ThreadingHTTPServer):
@@ -147,7 +172,7 @@ class _Server(ThreadingHTTPServer):
 
     def __init__(self, addr, token, on_result):
         super().__init__(addr, _Handler)
-        self.token, self.on_result, self.meter = token, on_result, _Meter()
+        self.token, self.on_result, self.meter, self.final_up = token, on_result, _Meter(), 0.0
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -183,6 +208,20 @@ class _Handler(BaseHTTPRequestHandler):
         if url.path == "/":
             self._reply(200, PAGE.encode(), "text/html; charset=utf-8")
         elif url.path == "/ping":
+            self._reply(200, b"ok")
+        elif url.path == "/rate":
+            up = self.server.meter.rate("up")
+            if query.get("final", ["0"])[0] == "1":
+                self.server.final_up = up  # remembered so the PC's summary uses the exact number the phone shows
+            self._reply(200, json.dumps({"up": round(up, 2)}).encode(), "application/json")
+        elif url.path == "/live":
+            try:
+                mbps = float(query.get("mbps", ["0"])[0])
+            except ValueError:
+                mbps = -1.0
+            if query.get("phase", [""])[0] == "down" and 0 <= mbps < 1e6:
+                self.server.on_result({"event": "live", "phase": "down", "mbps": mbps,
+                                       "ip": self.client_address[0]})
             self._reply(200, b"ok")
         elif url.path == "/begin":
             self._reply(200, b"ok")
@@ -234,6 +273,9 @@ class _Handler(BaseHTTPRequestHandler):
             except (ValueError, KeyError, TypeError):
                 self._reply(400, b"Bad result")
                 return
+            server_up, self.server.final_up = self.server.final_up or self.server.meter.rate("up"), 0.0
+            if server_up > 0:  # the server received the upload, so its count is the one to trust
+                result["up"] = server_up
             self._reply(200, b"ok")
             self.server.on_result(result)
         else:
@@ -259,24 +301,20 @@ class LocalServer:
         threading.Thread(target=self._sample, args=(self.server,), daemon=True).start()
 
     def _sample(self, server):
-        """Five times a second, turns the byte counters into a smoothed live speed for the PC to show."""
-        prev, smooth = {"down": 0, "up": 0}, {"down": 0.0, "up": 0.0}
-        active, last_move = {"down": False, "up": False}, {"down": 0.0, "up": 0.0}
-        t_prev = time.time()
+        """Five times a second: reports the upload speed the server receives, and a zero when a phase ends.
+
+        Live download speed comes from the phone (see /live), so the PC and the phone show the same number."""
+        meter, was = server.meter, {"down": False, "up": False}
         while not self._halt.wait(0.2):
-            total, ip = server.meter.snapshot()
-            now = time.time()
-            dt, t_prev = max(now - t_prev, 0.001), now
             for kind in ("down", "up"):
-                delta, prev[kind] = total[kind] - prev[kind], total[kind]
-                if delta > 0:
-                    inst = delta * 8 / dt / 1e6
-                    smooth[kind] = 0.5 * smooth[kind] + 0.5 * inst if active[kind] else inst
-                    active[kind], last_move[kind] = True, now
-                    self.on_result({"event": "live", "phase": kind, "mbps": smooth[kind], "ip": ip[kind]})
-                elif active[kind] and now - last_move[kind] > 0.6:
-                    active[kind], smooth[kind] = False, 0.0
-                    self.on_result({"event": "live", "phase": kind, "mbps": 0.0, "ip": ip[kind]})
+                now_active = meter.active(kind)
+                if kind == "up" and now_active:
+                    mbps = meter.rate("up")
+                    if mbps > 0:
+                        self.on_result({"event": "live", "phase": "up", "mbps": mbps, "ip": meter.ip["up"]})
+                elif was[kind] and not now_active:
+                    self.on_result({"event": "live", "phase": kind, "mbps": 0.0, "ip": meter.ip[kind]})
+                was[kind] = now_active
 
     def refresh(self):
         """Issues a new token. The old link and QR code stop working immediately."""
