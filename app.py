@@ -73,7 +73,7 @@ class Card(QWidget):
         self.fade = self.cfg.get("fade", True)
         self.idle = self.cfg.get("idle_opacity", 70)
         self.gpu_on = self.cfg.get("gpu", True)
-        self.vbars = self.cfg.get("vbars", True)
+        self.vbars = self.cfg.get("vbars", False)
         self.edge = self.cfg.get("edge") if self.mode == "mini" else None  # "left", "right" or None
 
         self.netinfo, self.net_alias = {}, None
@@ -526,11 +526,11 @@ class Card(QWidget):
         self.title.setVisible(not vertical)
         self.btn_menu.setVisible(not mini)
         self.head.setDirection(QBoxLayout.TopToBottom if vertical else QBoxLayout.LeftToRight)
-        self.head.setContentsMargins(*((5, 0, 0, 0) if vertical else (0, 0, 0, 0)))  # buttons line up with the text
+        self.head.setContentsMargins(*((3, 0, 0, 0) if vertical else (0, 0, 0, 0)))  # buttons line up with the text
         for b in (self.btn_tools, self.btn_mode, self.btn_pin):
-            b.resize_to(24 if vertical else 26)
+            b.resize_to(22 if vertical else 26)
             self.head.setAlignment(b, Qt.AlignLeft)
-        margins = (1, 8, 1, 10) if vertical else ((10, 4, 6, 4) if mini else (12, 10, 12, 12))
+        margins = (1, 6, 1, 8) if vertical else ((10, 4, 6, 4) if mini else (12, 10, 12, 12))
         self.layout().setContentsMargins(*margins)
         self.title.setMinimumWidth(330 if mini and not vertical else 0)
         self.apply_visibility()
@@ -939,6 +939,7 @@ class Card(QWidget):
         strip.set_row("write", amount(wr / 1e6, "MB", "GB"), visible=s["disk"])
         strip.set_vpn(bool(self.netinfo.get("vpn")))
         self.setToolTip("Down and up in Mb/s, disk read and write in MB/s")
+        self.vstrip.set_gap(self.vbars)
 
     def update_mini(self, cpu, gpu, ram_pct, down, up, rd, wr):
         def item(name, color, value):

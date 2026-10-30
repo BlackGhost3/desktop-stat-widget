@@ -228,14 +228,14 @@ class VStrip(QWidget):
     ROWS = (("cpu", "CPU", "ACCENT", True), ("gpu", "GPU", "PURPLE", True), ("ram", "RAM", "GREEN", True),
             ("down", "Down", "ACCENT", False), ("up", "Up", "ACCENT", False),
             ("read", "Read", "AMBER", False), ("write", "Write", "AMBER", False))
-    WIDTH = 62  # fills the window; the text is padded in, the bars run the full width
+    WIDTH = 58  # fills the window; the text is padded in, the bars (if shown) run the full width
 
     def __init__(self):
         super().__init__()
         self.setFixedWidth(self.WIDTH)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(7)
+        lay.setSpacing(5)
         self.rows = {}
         for key, name, color, has_bar in self.ROWS:
             box = QWidget()
@@ -243,8 +243,8 @@ class VStrip(QWidget):
             bl.setContentsMargins(0, 0, 0, 0)
             bl.setSpacing(1)
             k, v = label(""), label("")
-            k.setStyleSheet("font-size:11px; padding-left:6px;")
-            v.setStyleSheet("font-size:14px; font-weight:500; padding-left:6px;")
+            k.setStyleSheet("font-size:11px; padding-left:5px;")
+            v.setStyleSheet("font-size:14px; font-weight:500; padding-left:5px;")
             bl.addWidget(k)
             bl.addWidget(v)
             bar = Bar(color, track="HOVER") if has_bar else None
@@ -254,7 +254,7 @@ class VStrip(QWidget):
             lay.addWidget(box)
             self.rows[key] = (box, k, v, bar, name, color)
         self.vpn = label("")
-        self.vpn.setStyleSheet("font-size:11px; font-weight:500; padding-left:7px;")
+        self.vpn.setStyleSheet("font-size:11px; font-weight:500; padding-left:5px;")
         lay.addWidget(self.vpn)
 
     def set_row(self, key, value_html, frac=None, visible=True, bars=True):
@@ -267,6 +267,10 @@ class VStrip(QWidget):
         if bar:
             bar.setVisible(bars)
             bar.set(frac or 0.0)
+
+    def set_gap(self, bars):
+        """Rows sit closer together when there are no bars to separate them."""
+        self.layout().setSpacing(7 if bars else 4)
 
     def set_vpn(self, on):
         self.vpn.setVisible(on)
