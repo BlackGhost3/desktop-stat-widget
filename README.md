@@ -9,6 +9,7 @@
   <a href="https://github.com/BlackGhost3/desktop-stat-widget/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/BlackGhost3/desktop-stat-widget?label=release&color=7f9cff"></a>
   <img alt="Platform: Windows" src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-5fd8a6">
   <img alt="Built with Python and PySide6" src="https://img.shields.io/badge/built%20with-Python%20%2B%20PySide6-b58cff">
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-f0a860"></a>
 </p>
 
 <p align="center">
@@ -213,6 +214,11 @@ The packaged exe downloads the new `DesktopStatWidget.exe` from the release, swa
 **The hotkey does nothing.** Another app already uses `Ctrl+Alt+W`. Turn the hotkey off under **Behavior** and use the tray icon to show or hide the widget.
 
 **An update installed but the app didn't restart.** Versions before 1.3.1 had a restart bug. Start the app again manually; updates from 1.3.1 onward restart on their own.
+
+## License
+
+Released under the [MIT License](LICENSE). The packaged exe bundles open-source components such as Qt, which keep
+their own licenses; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## Limitations
 
