@@ -7,7 +7,7 @@ from collections import deque
 
 import psutil
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal, QObject
-from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen
+from PySide6.QtGui import QColor, QCursor, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (
     QApplication, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMenu, QMessageBox,
     QPushButton, QToolButton, QVBoxLayout, QWidget, QLayout,
@@ -153,13 +153,9 @@ class IconBtn(QToolButton):
         p.setPen(pen)
         p.setBrush(Qt.NoBrush)
         k = self.kind
-        if k == "globe":
-            p.drawEllipse(QRectF(2, 2, 12, 12))
-            p.drawEllipse(QRectF(5.5, 2, 5, 12))
-            p.drawLine(QPointF(2, 8), QPointF(14, 8))
-        elif k == "pulse":
-            p.drawPolyline([QPointF(1.5, 8), QPointF(4.5, 8), QPointF(6.5, 3), QPointF(9.5, 13),
-                            QPointF(11.5, 8), QPointF(14.5, 8)])
+        if k == "tools":
+            for x, y in ((2, 2), (9, 2), (2, 9), (9, 9)):
+                p.drawRoundedRect(QRectF(x, y, 5, 5), 1.5, 1.5)
         elif k == "size":
             p.drawPolyline([QPointF(2, 6), QPointF(2, 2), QPointF(6, 2)])
             p.drawPolyline([QPointF(10, 14), QPointF(14, 14), QPointF(14, 10)])
@@ -188,6 +184,10 @@ class Card(QWidget):
         self.mode = self.cfg.get("mode", "full")
         self.pinned = self.cfg.get("pinned", True)
         self.netinfo = {}
+        self.net_open = self.ping_open = False
+        self.opacity = self.cfg.get("opacity", 100)
+        self.fade = self.cfg.get("fade", True)
+        self.idle = self.cfg.get("idle_opacity", 70)
         self.net_alias = None
         self.rates = sysinfo.Rates()
         self.peaks = {"disk": 100e6}
@@ -212,6 +212,7 @@ class Card(QWidget):
         self.timer = QTimer(self, interval=1000, timeout=self.tick)
         self.timer.start()
         QTimer(self, interval=15000, timeout=self.refresh_net_config).start()
+        QTimer(self, interval=120, timeout=self.hover_check).start()
         self.set_mode(self.mode)
 
     # ---------- layout ----------
@@ -226,18 +227,16 @@ class Card(QWidget):
         self.title = label("System")
         self.title.setStyleSheet("font-weight:500; font-size:13px;")
         head.addWidget(self.title, 1)
-        self.btn_net = IconBtn("globe", "Network settings", checkable=True)
-        self.btn_ping = IconBtn("pulse", "Ping", checkable=True)
+        self.btn_tools = IconBtn("tools", "Tools")
         self.btn_mode = IconBtn("size", "Cycle size: full / compact / mini")
         self.btn_pin = IconBtn("pin", "Always on top", checkable=True)
         self.btn_menu = IconBtn("menu", "Menu")
         self.btn_pin.setChecked(self.pinned)
-        self.btn_net.toggled.connect(lambda on: self.panel_net.setVisible(on and self.mode == "full"))
-        self.btn_ping.toggled.connect(lambda on: self.panel_ping.setVisible(on and self.mode == "full"))
+        self.btn_tools.clicked.connect(lambda: self.show_tools(self.btn_tools.mapToGlobal(self.btn_tools.rect().bottomLeft())))
         self.btn_mode.clicked.connect(lambda: self.set_mode(MODES[(MODES.index(self.mode) + 1) % 3]))
         self.btn_pin.toggled.connect(self.set_pinned)
         self.btn_menu.clicked.connect(lambda: self.show_menu(self.btn_menu.mapToGlobal(self.btn_menu.rect().bottomLeft())))
-        for b in (self.btn_net, self.btn_ping, self.btn_mode, self.btn_pin, self.btn_menu):
+        for b in (self.btn_tools, self.btn_mode, self.btn_pin, self.btn_menu):
             head.addWidget(b)
         root.addLayout(head)
 
@@ -263,16 +262,18 @@ class Card(QWidget):
         bl.addWidget(self.spark_net)
         bl.addWidget(self.m_read)
         bl.addWidget(self.m_write)
+        self.l_disk = label("R 0 · W 0 MB/s", mono=True)
+        bl.addWidget(self.l_disk)
         self.l_ip = label("", mono=True)
         bl.addWidget(self.l_ip)
         root.addWidget(self.body)
 
         self.panel_net = self.build_net_panel()
         self.panel_ping = self.build_ping_panel()
-        root.addWidget(self.panel_net)
-        root.addWidget(self.panel_ping)
-        self.panel_net.hide()
-        self.panel_ping.hide()
+        for pnl in (self.panel_net, self.panel_ping):
+            pnl.setFixedWidth(330)
+            pnl.hide()
+            root.addWidget(pnl)
 
     def panel(self):
         w = QWidget()
@@ -374,11 +375,12 @@ class Card(QWidget):
         self.mode = mode
         mini, full = mode == "mini", mode == "full"
         self.body.setVisible(not mini)
-        self.spark_net.setVisible(full)
-        self.panel_net.setVisible(full and self.btn_net.isChecked())
-        self.panel_ping.setVisible(full and self.btn_ping.isChecked())
-        self.btn_net.setVisible(full)
-        self.btn_ping.setVisible(full)
+        for w in (self.spark_net, self.m_read, self.m_write):
+            w.setVisible(full)
+        self.l_disk.setVisible(mode == "compact")
+        self.btn_tools.setVisible(not mini)
+        self.panel_net.setVisible(self.net_open and not mini)
+        self.panel_ping.setVisible(self.ping_open and not mini)
         self.title.setTextFormat(Qt.RichText if mini else Qt.PlainText)
         self.title.setStyleSheet("font-size:12px;" if mini else "font-weight:500; font-size:13px;")
         if not mini:
@@ -424,10 +426,54 @@ class Card(QWidget):
         start.triggered.connect(self.toggle_startup)
         ops = menu.addMenu("Opacity")
         for pct in (100, 85, 70):
-            ops.addAction(f"{pct}%", lambda p=pct: self.setWindowOpacity(p / 100) or self.save(p))
+            act = ops.addAction(f"{pct}%", lambda p=pct: self.set_opacity(opacity=p))
+            act.setCheckable(True)
+            act.setChecked(self.opacity == pct)
+        fade = menu.addAction("Fade when cursor is away")
+        fade.setCheckable(True)
+        fade.setChecked(self.fade)
+        fade.triggered.connect(lambda on: self.set_opacity(fade=on))
+        idle = menu.addMenu("Faded opacity")
+        for pct in (30, 50, 70):
+            act = idle.addAction(f"{pct}%", lambda p=pct: self.set_opacity(idle=p))
+            act.setCheckable(True)
+            act.setChecked(self.idle == pct)
         menu.addSeparator()
         menu.addAction("Quit", self.quit)
         menu.exec(pos)
+
+    def show_tools(self, pos):
+        menu = QMenu(self)
+        for text, attr in (("Network settings", "net_open"), ("Ping", "ping_open")):
+            act = menu.addAction(text)
+            act.setCheckable(True)
+            act.setChecked(getattr(self, attr))
+            act.triggered.connect(lambda on, a=attr: self.toggle_panel(a, on))
+        menu.exec(pos)
+
+    def toggle_panel(self, attr, on):
+        setattr(self, attr, on)
+        self.panel_net.setVisible(self.net_open)
+        self.panel_ping.setVisible(self.ping_open)
+        self.adjustSize()
+
+    def set_opacity(self, opacity=None, fade=None, idle=None):
+        if opacity is not None:
+            self.opacity = opacity
+        if fade is not None:
+            self.fade = fade
+        if idle is not None:
+            self.idle = idle
+        self.hover_check(force=True)
+        self.save()
+
+    def hover_check(self, force=False):
+        under = (self.drag is not None or self.frameGeometry().contains(QCursor.pos())
+                 or QApplication.activePopupWidget() is not None
+                 or QApplication.activeModalWidget() is not None)
+        pct = self.opacity if (under or not self.fade) else min(self.opacity, self.idle)
+        if force or abs(self.windowOpacity() - pct / 100) > 0.01:
+            self.setWindowOpacity(pct / 100)
 
     def toggle_startup(self, on):
         try:
@@ -435,11 +481,10 @@ class Card(QWidget):
         except OSError as err:
             QMessageBox.warning(self, "Startup", f"Couldn't change the startup entry.\n{err}")
 
-    def save(self, opacity=None):
+    def save(self):
         self.cfg.update(mode=self.mode, pinned=self.pinned, pos=[self.x(), self.y()],
-                        ping_target=self.f_target.text().strip() or "1.1.1.1")
-        if opacity:
-            self.cfg["opacity"] = opacity
+                        ping_target=self.f_target.text().strip() or "1.1.1.1",
+                        opacity=self.opacity, fade=self.fade, idle_opacity=self.idle)
         winutil.save_config(self.cfg)
 
     def quit(self):
@@ -468,6 +513,7 @@ class Card(QWidget):
         down, up = rx * 8 / 1e6, tx * 8 / 1e6
         self.l_speed.setText(f"↓ {down:.1f}  ↑ {up:.1f} Mb/s")
         self.spark_net.push(down)
+        self.l_disk.setText(f"R {rd / 1e6:.0f} · W {wr / 1e6:.0f} MB/s")
 
         if self.mode == "mini":
             gtxt = f"{gpu}%" if gpu >= 0 else "n/a"
@@ -670,7 +716,6 @@ class Card(QWidget):
 def main():
     app = QApplication(sys.argv)
     card = Card()
-    card.setWindowOpacity(card.cfg.get("opacity", 100) / 100)
     if "--selftest" in sys.argv:
         QTimer.singleShot(7000,lambda: (print("ok", card.l_ip.text(), card.m_cpu.val.text(), card.m_gpu.val.text()), card.quit()))
     sys.exit(app.exec())
