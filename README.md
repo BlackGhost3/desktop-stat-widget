@@ -31,6 +31,7 @@ A small always-on-top Windows widget (Python + PySide6) showing live system stat
 - Dark, light or follow-Windows theme, five accent colors
 - Always-on-top toggle, opacity, fade when the cursor is away, snap to screen edges
 - Choose which stats are shown, including in the mini strip
+- Drag the mini strip to the left or right screen edge and it turns into a narrow vertical column (with optional thin bars for CPU, GPU and RAM; toggle under Show); drag it away and it goes back to the horizontal strip
 - Show or hide with Ctrl+Alt+W
 - Start with Windows
 - Update check and one-click install from GitHub releases

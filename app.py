@@ -25,7 +25,7 @@ import theme
 import updater
 import winutil
 from theme import P
-from widgets import Bar, Gauge, IconBtn, Metric, QrView, Spark, label
+from widgets import Bar, Gauge, IconBtn, Metric, QrView, Spark, VStrip, label
 
 DNS_PRESETS = {"cloudflare": ["1.1.1.1", "1.0.0.1"], "google": ["8.8.8.8", "8.8.4.4"]}
 MODES = ["full", "compact", "mini"]
@@ -34,6 +34,7 @@ SHOW_KEYS = (("cpu", "CPU"), ("ram", "RAM"), ("net", "Network speed"), ("disk", 
 PANELS = (("net", "Network settings"), ("ping", "Ping"), ("hist", "Connection history"),
           ("speed", "Speed test"), ("local", "Local speed test"), ("proc", "Top processes"))
 SNAP = 14
+EDGE_ZONE = 30  # cursor this close to a left or right screen edge makes the mini widget go vertical
 FIREWALL_RULE = "Desktop Stat Widget"
 
 
@@ -72,6 +73,8 @@ class Card(QWidget):
         self.fade = self.cfg.get("fade", True)
         self.idle = self.cfg.get("idle_opacity", 70)
         self.gpu_on = self.cfg.get("gpu", True)
+        self.vbars = self.cfg.get("vbars", True)
+        self.edge = self.cfg.get("edge") if self.mode == "mini" else None  # "left", "right" or None
 
         self.netinfo, self.net_alias = {}, None
         self.public_ip, self.power_plan, self.space_text = None, "", ""
@@ -171,6 +174,9 @@ class Card(QWidget):
         for b in (self.btn_tools, self.btn_mode, self.btn_pin, self.btn_menu):
             head.addWidget(b)
         root.addLayout(head)
+        self.vstrip = VStrip()
+        self.vstrip.hide()
+        root.addWidget(self.vstrip)
 
         self.body = QWidget()
         bl = QVBoxLayout(self.body)
@@ -485,20 +491,55 @@ class Card(QWidget):
         self.move(pos)
         self.save()
 
+    @property
+    def vertical(self):
+        """The mini widget stacks vertically while it is snapped to the left or right screen edge."""
+        return self.mode == "mini" and self.edge in ("left", "right")
+
     def set_mode(self, mode):
         self.mode = mode
-        mini = mode == "mini"
+        self.edge = (self.edge or self.edge_from_position()) if mode == "mini" else None
+        self.body.setFixedWidth(330 if mode == "full" else 270)
+        self.apply_orientation()
+        self.save()
+
+    def edge_from_position(self):
+        area = self.screen().availableGeometry()
+        if self.x() <= area.left() + 2:
+            return "left"
+        if self.x() + self.width() >= area.right() - 1:
+            return "right"
+        return None
+
+    def set_edge(self, edge):
+        if edge != self.edge:
+            self.edge = edge
+            self.apply_orientation()
+
+    def apply_orientation(self):
+        mini, vertical = self.mode == "mini", self.vertical
         self.title.setTextFormat(Qt.RichText if mini else Qt.PlainText)
         self.title.setStyleSheet("font-size:12px;" if mini else "font-weight:500; font-size:13px;")
         if not mini:
             self.title.setText("System")
             self.setToolTip("")
+        self.title.setVisible(not vertical)
         self.btn_menu.setVisible(not mini)
-        self.layout().setContentsMargins(*((10, 4, 6, 4) if mini else (12, 10, 12, 12)))
-        self.body.setFixedWidth(330 if mode == "full" else 270)
-        self.title.setMinimumWidth(0 if not mini else 330)
+        for b in (self.btn_tools, self.btn_mode, self.btn_pin):
+            b.resize_to(22 if vertical else 26)
+        margins = (8, 8, 8, 10) if vertical else ((10, 4, 6, 4) if mini else (12, 10, 12, 12))
+        self.layout().setContentsMargins(*margins)
+        self.title.setMinimumWidth(330 if mini and not vertical else 0)
         self.apply_visibility()
-        self.save()
+        self.place_on_edge()
+
+    def place_on_edge(self):
+        """Keeps the vertical strip flush against its screen edge after its width changes."""
+        if not self.vertical:
+            return
+        self.layout().activate()
+        area = self.screen().availableGeometry()
+        self.move(area.left() if self.edge == "left" else area.right() + 1 - self.width(), self.y())
 
     def apply_visibility(self):
         s, mode = self.show_cfg, self.mode
@@ -519,9 +560,11 @@ class Card(QWidget):
         self.l_space.setVisible(s["space"] and bool(self.space_text))
         self.l_batt.setVisible(self.has_battery)
         self.l_vpn.setVisible(bool(self.netinfo.get("vpn")) and mode != "mini")
+        self.vstrip.setVisible(self.vertical)
         for key, pnl in self.panels.items():
             pnl.setVisible(self.open_panel == key)
         self.adjustSize()
+        self.place_on_edge()
 
     def paintEvent(self, _):
         p = QPainter(self)
@@ -538,11 +581,21 @@ class Card(QWidget):
     def mouseMoveEvent(self, e):
         if self.drag is None or not e.buttons() & Qt.LeftButton:
             return
-        pos = e.globalPosition().toPoint() - self.drag
-        screen = QApplication.screenAt(e.globalPosition().toPoint()) or self.screen()
-        area, w, h = screen.availableGeometry(), self.width(), self.height()
+        cursor = e.globalPosition().toPoint()
+        screen = QApplication.screenAt(cursor) or self.screen()
+        area = screen.availableGeometry()
+        if self.mode == "mini":  # near a left or right edge the strip goes vertical; elsewhere it's horizontal
+            edge = ("left" if cursor.x() <= area.left() + EDGE_ZONE else
+                    "right" if cursor.x() >= area.right() - EDGE_ZONE else None)
+            if edge != self.edge:
+                self.set_edge(edge)
+                self.drag = QPoint(min(self.drag.x(), max(self.width() - 12, 0)), self.drag.y())
+        pos = cursor - self.drag
+        w, h = self.width(), self.height()
         x, y = pos.x(), pos.y()
-        if abs(x - area.left()) < SNAP:
+        if self.vertical:
+            x = area.left() if self.edge == "left" else area.right() + 1 - w
+        elif abs(x - area.left()) < SNAP:
             x = area.left()
         elif abs(x + w - area.right() - 1) < SNAP:
             x = area.right() + 1 - w
@@ -635,6 +688,8 @@ class Card(QWidget):
         for key, text in SHOW_KEYS:
             self.add_check(shown, text, self.show_cfg[key], lambda on, k=key: self.set_show(k, on))
         self.add_check(shown, "GPU (uses extra CPU and RAM)", self.gpu_on, self.set_gpu)
+        shown.addSeparator()
+        self.add_check(shown, "Bars in the vertical strip", self.vbars, self.set_vbars)
 
         beh = menu.addMenu("Behavior")
         self.add_check(beh, "Start with Windows", winutil.startup_enabled(), self.toggle_startup)
@@ -685,6 +740,11 @@ class Card(QWidget):
     def follow_system_theme(self):
         if self.theme_name == "auto" and theme.resolve("auto") != P.RESOLVED:
             self.set_theme()
+
+    def set_vbars(self, on):
+        self.vbars = on
+        self.apply_visibility()
+        self.save()
 
     def set_show(self, key, on):
         self.show_cfg[key] = on
@@ -769,7 +829,7 @@ class Card(QWidget):
                         opacity=self.opacity, fade=self.fade, idle_opacity=self.idle, gpu=self.gpu_on,
                         theme=self.theme_name, accent=self.accent_name, show=self.show_cfg,
                         alerts=self.alerts_on, monitor=self.monitor_on, hotkey=self.hotkey_on,
-                        speed_cache=self.b_cache.isChecked())
+                        speed_cache=self.b_cache.isChecked(), vbars=self.vbars, edge=self.edge)
         winutil.save_config(self.cfg)
 
     def quit(self):
@@ -855,7 +915,27 @@ class Card(QWidget):
         if self.open_panel == "hist":
             self.refresh_hist()
         if self.mode == "mini":
-            self.update_mini(cpu, gpu, ram.percent, down, up, rd, wr)
+            if self.vertical:
+                self.update_vertical(cpu, gpu, ram.percent, down, up, rd, wr)
+            else:
+                self.update_mini(cpu, gpu, ram.percent, down, up, rd, wr)
+
+    def update_vertical(self, cpu, gpu, ram_pct, down, up, rd, wr):
+        s, strip = self.show_cfg, self.vstrip
+        unit_style = f"color:{P.DIM}; font-size:11px; font-weight:400"
+
+        def amount(value, small, big):
+            number, unit = (f"{value / 1000:.1f}", big) if value >= 1000 else (f"{value:.0f}", small)
+            return f"{number} <span style='{unit_style}'>{unit}</span>"
+        strip.set_row("cpu", f"{cpu:.0f}%", cpu / 100, s["cpu"], self.vbars)
+        strip.set_row("gpu", f"{gpu}%" if gpu >= 0 else "n/a", max(gpu, 0) / 100, self.gpu_on, self.vbars)
+        strip.set_row("ram", f"{ram_pct:.0f}%", ram_pct / 100, s["ram"], self.vbars)
+        strip.set_row("down", amount(down, "Mb", "Gb"), visible=s["net"])
+        strip.set_row("up", amount(up, "Mb", "Gb"), visible=s["net"])
+        strip.set_row("read", amount(rd / 1e6, "MB", "GB"), visible=s["disk"])
+        strip.set_row("write", amount(wr / 1e6, "MB", "GB"), visible=s["disk"])
+        strip.set_vpn(bool(self.netinfo.get("vpn")))
+        self.setToolTip("Down and up in Mb/s, disk read and write in MB/s")
 
     def update_mini(self, cpu, gpu, ram_pct, down, up, rd, wr):
         def item(name, color, value):

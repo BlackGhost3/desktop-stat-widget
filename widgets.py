@@ -4,7 +4,7 @@ from collections import deque
 
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer
 from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QToolButton, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QToolButton, QVBoxLayout, QWidget
 
 from theme import P
 
@@ -220,6 +220,59 @@ class Metric(QWidget):
         self.val.setText(text)
 
 
+class VStrip(QWidget):
+    """The mini widget's vertical layout, used when it is snapped to the left or right screen edge.
+
+    Each row is a small colored label over a larger value, with an optional thin bar for CPU, GPU and RAM."""
+
+    ROWS = (("cpu", "CPU", "ACCENT", True), ("gpu", "GPU", "PURPLE", True), ("ram", "RAM", "GREEN", True),
+            ("down", "Down", "ACCENT", False), ("up", "Up", "ACCENT", False),
+            ("read", "Read", "AMBER", False), ("write", "Write", "AMBER", False))
+    WIDTH = 76
+
+    def __init__(self):
+        super().__init__()
+        self.setFixedWidth(self.WIDTH)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(7)
+        self.rows = {}
+        for key, name, color, has_bar in self.ROWS:
+            box = QWidget()
+            bl = QVBoxLayout(box)
+            bl.setContentsMargins(0, 0, 0, 0)
+            bl.setSpacing(1)
+            k, v = label(""), label("")
+            k.setStyleSheet("font-size:11px;")
+            v.setStyleSheet("font-size:15px; font-weight:500;")
+            bl.addWidget(k)
+            bl.addWidget(v)
+            bar = Bar(color) if has_bar else None
+            if bar:
+                bar.setFixedHeight(4)
+                bl.addWidget(bar)
+            lay.addWidget(box)
+            self.rows[key] = (box, k, v, bar, name, color)
+        self.vpn = label("")
+        self.vpn.setStyleSheet("font-size:11px; font-weight:500;")
+        lay.addWidget(self.vpn)
+
+    def set_row(self, key, value_html, frac=None, visible=True, bars=True):
+        box, k, v, bar, name, color = self.rows[key]
+        box.setVisible(visible)
+        if not visible:
+            return
+        k.setText(f"<span style='color:{getattr(P, color)}'>{name}</span>")
+        v.setText(value_html)
+        if bar:
+            bar.setVisible(bars)
+            bar.set(frac or 0.0)
+
+    def set_vpn(self, on):
+        self.vpn.setVisible(on)
+        self.vpn.setText(f"<span style='color:{P.GREEN}'>VPN</span>" if on else "")
+
+
 class IconBtn(QToolButton):
     """Header button with a vector line icon drawn on a 16x16 grid."""
 
@@ -229,7 +282,10 @@ class IconBtn(QToolButton):
         self.setToolTip(tip)
         self.setCheckable(checkable)
         self.setCursor(Qt.PointingHandCursor)
-        self.setFixedSize(26, 26)
+        self.resize_to(26)
+
+    def resize_to(self, px):
+        self.setFixedSize(px, px)
 
     def paintEvent(self, _):
         p = QPainter(self)
