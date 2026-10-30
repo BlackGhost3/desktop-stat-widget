@@ -82,6 +82,7 @@ class Card(QWidget):
         self.wifi, self.link_html, self.link_plain = {}, "", ""
         self.local = None
         self.device_names, self.done_ip = dict(self.cfg.get("device_names", {})), None
+        self.local_done_at = 0.0
         self.local_results = deque(self.cfg.get("local_results", []), maxlen=50)
         self.history_win = None
         self.last_gateway, self.suggested = None, None
@@ -402,6 +403,9 @@ class Card(QWidget):
             self.done_vals[key] = v
             vals.addLayout(col)
         dc.addLayout(vals)
+        self.l_done_note = label("", dim=True)
+        self.l_done_note.setWordWrap(True)
+        dc.addWidget(self.l_done_note)
         self.done_card.hide()
         lay.addWidget(self.done_card)
         self.local_gauge = Gauge(150)
@@ -1098,6 +1102,16 @@ class Card(QWidget):
         if self.done_ip == ip and self.local_results:
             self.show_done(self.local_results[0])
 
+    def done_note(self, r):
+        """One-line verdict: how much of this PC's own link the slower direction used."""
+        c = self.netinfo
+        link = int(c["speed"]) / 1e6 if str(c.get("speed", "")).isdigit() and sysinfo.link_kind(c) != "Wi-Fi" else 0
+        if not 0 < link < 1e6:
+            return ""
+        pct = 100 * min(r["down"], r["up"]) / link
+        text = f"This PC's link is {sysinfo.fmt_speed(link * 1e6)}. The slower direction reached {pct:.0f}% of it."
+        return text if pct >= 70 else text + " The phone's Wi-Fi or the router is likely the limit."
+
     def show_done(self, r):
         who = f"{self.name_of(r)} ({r['ip']})"
         self.done_ip = r["ip"]
@@ -1105,6 +1119,8 @@ class Card(QWidget):
         self.done_vals["down"].setText(rate(r["down"]))
         self.done_vals["up"].setText(rate(r["up"]))
         self.done_vals["ping"].setText(f"{r['ping']:.0f} ms")
+        self.l_done_note.setText(self.done_note(r))
+        self.l_done_note.setVisible(bool(self.l_done_note.text()))
         self.done_card.show()
 
     def on_local_result(self, r):
@@ -1120,6 +1136,10 @@ class Card(QWidget):
             return
         if event == "live":
             if not self.local_gauge.isVisible():
+                # A speed-zero event trails every test by about a second; it must not bring the gauge back
+                # over the summary. Only real traffic starts a new run without a "start" event.
+                if r["mbps"] <= 0 or time.time() - self.local_done_at < 4:
+                    return
                 self.done_card.hide()
                 self.local_gauge.show()
                 self.adjustSize()
@@ -1127,6 +1147,7 @@ class Card(QWidget):
             self.local_gauge.set_value(r["mbps"], "Download" if down else "Upload", "ACCENT" if down else "PURPLE")
             return
         self.local_gauge.hide()
+        self.local_done_at = time.time()
         self.local_results.appendleft(r)
         self.cfg["local_results"] = list(self.local_results)
         self.render_local_results()
