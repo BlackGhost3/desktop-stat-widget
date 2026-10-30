@@ -123,13 +123,31 @@ def lan_ip():
         s.close()
 
 
+class _Meter:
+    """Counts the bytes the server really moves, so the PC can show the test live."""
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.total = {"down": 0, "up": 0}
+        self.ip = {"down": "", "up": ""}
+
+    def add(self, kind, n, ip):
+        with self.lock:
+            self.total[kind] += n
+            self.ip[kind] = ip
+
+    def snapshot(self):
+        with self.lock:
+            return dict(self.total), dict(self.ip)
+
+
 class _Server(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = False  # on Windows this would let two servers share one port
 
     def __init__(self, addr, token, on_result):
         super().__init__(addr, _Handler)
-        self.token, self.on_result = token, on_result
+        self.token, self.on_result, self.meter = token, on_result, _Meter()
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -166,6 +184,10 @@ class _Handler(BaseHTTPRequestHandler):
             self._reply(200, PAGE.encode(), "text/html; charset=utf-8")
         elif url.path == "/ping":
             self._reply(200, b"ok")
+        elif url.path == "/begin":
+            self._reply(200, b"ok")
+            self.server.on_result({"event": "start", "ip": self.client_address[0],
+                                   "device": device_name(self.headers.get("User-Agent", ""))})
         elif url.path == "/down":
             try:
                 size = max(0, min(int(query.get("size", ["10000000"])[0]), MAX_DOWN))
@@ -181,6 +203,7 @@ class _Handler(BaseHTTPRequestHandler):
                     piece = CHUNK[:min(len(CHUNK), size)]
                     self.wfile.write(piece)
                     size -= len(piece)
+                    self.server.meter.add("down", len(piece), self.client_address[0])
             except OSError:  # the page stops the stream when its time is up
                 self.close_connection = True
         else:
@@ -200,11 +223,8 @@ class _Handler(BaseHTTPRequestHandler):
                 if not data:
                     break
                 left -= len(data)
+                self.server.meter.add("up", len(data), self.client_address[0])
             self._reply(200, b"ok")
-        elif url.path == "/begin":
-            self._reply(200, b"ok")
-            self.server.on_result({"event": "start", "ip": self.client_address[0],
-                                   "device": device_name(self.headers.get("User-Agent", ""))})
         elif url.path == "/result" and length < 4096:
             try:
                 data = json.loads(self.rfile.read(length))
@@ -234,7 +254,29 @@ class LocalServer:
         else:
             raise OSError("No free port between 8765 and 8784.")
         self.port = port
+        self._halt = threading.Event()
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        threading.Thread(target=self._sample, args=(self.server,), daemon=True).start()
+
+    def _sample(self, server):
+        """Five times a second, turns the byte counters into a smoothed live speed for the PC to show."""
+        prev, smooth = {"down": 0, "up": 0}, {"down": 0.0, "up": 0.0}
+        active, last_move = {"down": False, "up": False}, {"down": 0.0, "up": 0.0}
+        t_prev = time.time()
+        while not self._halt.wait(0.2):
+            total, ip = server.meter.snapshot()
+            now = time.time()
+            dt, t_prev = max(now - t_prev, 0.001), now
+            for kind in ("down", "up"):
+                delta, prev[kind] = total[kind] - prev[kind], total[kind]
+                if delta > 0:
+                    inst = delta * 8 / dt / 1e6
+                    smooth[kind] = 0.5 * smooth[kind] + 0.5 * inst if active[kind] else inst
+                    active[kind], last_move[kind] = True, now
+                    self.on_result({"event": "live", "phase": kind, "mbps": smooth[kind], "ip": ip[kind]})
+                elif active[kind] and now - last_move[kind] > 0.6:
+                    active[kind], smooth[kind] = False, 0.0
+                    self.on_result({"event": "live", "phase": kind, "mbps": 0.0, "ip": ip[kind]})
 
     def refresh(self):
         """Issues a new token. The old link and QR code stop working immediately."""
@@ -247,6 +289,7 @@ class LocalServer:
 
     def stop(self):
         if self.server:
+            self._halt.set()
             self.server.shutdown()
             self.server.server_close()
             self.server = None

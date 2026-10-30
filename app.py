@@ -395,6 +395,9 @@ class Card(QWidget):
         dc.addLayout(vals)
         self.done_card.hide()
         lay.addWidget(self.done_card)
+        self.local_gauge = Gauge(150)
+        self.local_gauge.hide()
+        lay.addWidget(self.local_gauge)
         self.l_local_link = label("", dim=True)
         lay.addWidget(self.l_local_link)
         urlrow = QHBoxLayout()
@@ -1062,6 +1065,7 @@ class Card(QWidget):
         if self.local:
             self.local.stop()
             self.local = None
+        self.local_gauge.hide()
         self.url_box.hide()
         self.qr.hide()
         self.b_local.setText("Start")
@@ -1069,7 +1073,7 @@ class Card(QWidget):
         self.adjustSize()
 
     def name_of(self, r):
-        return self.device_names.get(r["ip"]) or r["device"]
+        return self.device_names.get(r["ip"]) or r.get("device", "Device")
 
     def rename_device(self, ip):
         if not ip:
@@ -1111,11 +1115,24 @@ class Card(QWidget):
 
     def on_local_result(self, r):
         who = f"{self.name_of(r)} ({r['ip']})"
-        if r.get("event") == "start":
+        event = r.get("event")
+        if event == "start":
             self.done_card.hide()
+            self.local_gauge.reset()
+            self.local_gauge.set_value(0, "Ping", "ACCENT")
+            self.local_gauge.show()
             self.l_local_status.setText(f"Testing {who}…")
             self.adjustSize()
             return
+        if event == "live":
+            if not self.local_gauge.isVisible():
+                self.done_card.hide()
+                self.local_gauge.show()
+                self.adjustSize()
+            down = r["phase"] == "down"
+            self.local_gauge.set_value(r["mbps"], "Download" if down else "Upload", "ACCENT" if down else "PURPLE")
+            return
+        self.local_gauge.hide()
         self.local_results.appendleft(r)
         self.cfg["local_results"] = list(self.local_results)
         self.render_local_results()
