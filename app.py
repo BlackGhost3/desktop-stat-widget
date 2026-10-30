@@ -536,6 +536,14 @@ class Card(QWidget):
         self.apply_visibility()
         self.place_on_edge()
 
+    def keep_on_screen(self):
+        """Pulls the window back inside the usable screen area (above the taskbar) after it grows or moves."""
+        area = self.screen().availableGeometry()
+        x = max(area.left(), min(self.x(), area.right() + 1 - self.width()))
+        y = max(area.top(), min(self.y(), area.bottom() + 1 - self.height()))
+        if (x, y) != (self.x(), self.y()):
+            self.move(x, y)
+
     def place_on_edge(self):
         """Keeps the vertical strip flush against its screen edge after its width changes."""
         if not self.vertical:
@@ -568,6 +576,7 @@ class Card(QWidget):
             pnl.setVisible(self.open_panel == key)
         self.adjustSize()
         self.place_on_edge()
+        self.keep_on_screen()
 
     def paintEvent(self, _):
         p = QPainter(self)
@@ -592,7 +601,8 @@ class Card(QWidget):
                     "right" if cursor.x() >= area.right() - EDGE_ZONE else None)
             if edge != self.edge:
                 self.set_edge(edge)
-                self.drag = QPoint(min(self.drag.x(), max(self.width() - 12, 0)), self.drag.y())
+                self.drag = QPoint(min(self.drag.x(), max(self.width() - 12, 0)),
+                                   min(self.drag.y(), max(self.height() - 6, 0)))
         pos = cursor - self.drag
         w, h = self.width(), self.height()
         x, y = pos.x(), pos.y()
@@ -606,6 +616,9 @@ class Card(QWidget):
             y = area.top()
         elif abs(y + h - area.bottom() - 1) < SNAP:
             y = area.bottom() + 1 - h
+        # never let the window end up partly off the screen, e.g. a tall vertical strip near the bottom
+        x = max(area.left(), min(x, area.right() + 1 - w))
+        y = max(area.top(), min(y, area.bottom() + 1 - h))
         self.move(x, y)
 
     def mouseReleaseEvent(self, e):
