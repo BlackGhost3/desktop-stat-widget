@@ -378,18 +378,19 @@ class Card(QWidget):
         self.panel_ping.setVisible(full and self.btn_ping.isChecked())
         self.btn_net.setVisible(full)
         self.btn_ping.setVisible(full)
-        self.title.setText("" if not mini else self.title.text())
+        self.title.setTextFormat(Qt.RichText if mini else Qt.PlainText)
+        self.title.setStyleSheet("font-size:13px;" if mini else "font-weight:500; font-size:13px;")
         if not mini:
             self.title.setText("System")
         self.body.setFixedWidth(330 if full else 270)
-        self.title.setMinimumWidth(0 if not mini else 340)
+        self.title.setMinimumWidth(0 if not mini else 560)
         self.adjustSize()
         self.save()
 
     def paintEvent(self, _):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
-        p.setPen(QPen(QColor(LINE), 1))
+        p.setPen(QPen(QColor("#3a3d4c"), 1))
         p.setBrush(QColor(BG))
         p.drawRoundedRect(QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5), 16, 16)
 
@@ -465,9 +466,19 @@ class Card(QWidget):
         self.spark_net.push(down)
 
         if self.mode == "mini":
-            gtxt = f"{gpu}" if gpu >= 0 else "–"
-            self.title.setText(f"CPU {cpu:.0f}  GPU {gtxt}  RAM {ram.percent:.0f}  "
-                               f"↓{down:.0f} ↑{up:.0f}  R{rd / 1e6:.0f} W{wr / 1e6:.0f}")
+            gtxt = f"{gpu}%" if gpu >= 0 else "n/a"
+
+            def item(name, color, value):
+                return (f"<span style='color:{color}'>●</span>&nbsp;<span style='color:{DIM}'>{name}</span>"
+                        f"&nbsp;<b>{value}</b>")
+            sep = f"<span style='color:{LINE}'>&nbsp;&nbsp;│&nbsp;&nbsp;</span>"
+            self.title.setText(sep.join([
+                item("CPU", BLUE, f"{cpu:.0f}%"),
+                item("GPU", PURPLE, gtxt),
+                item("RAM", GREEN, f"{ram.percent:.0f}%"),
+                item("NET", BLUE, f"↓{down:.0f} ↑{up:.0f} <span style='color:{DIM}'>Mb/s</span>"),
+                item("DISK", AMBER, f"R{rd / 1e6:.0f} W{wr / 1e6:.0f} <span style='color:{DIM}'>MB/s</span>"),
+            ]))
 
     def refresh_net_config(self):
         def work():
