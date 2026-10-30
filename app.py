@@ -319,7 +319,7 @@ class Card(QWidget):
             self.speed_vals[key] = v
             row.addLayout(col)
         lay.addLayout(row)
-        self.l_speed_status = label("Uses about 45 MB of data per run.", dim=True)
+        self.l_speed_status = label("Uses about 70 MB of data per run.", dim=True)
         lay.addWidget(self.l_speed_status)
         return w
 
@@ -896,7 +896,7 @@ class Card(QWidget):
         self.speed_vals["down"].setText(f"{result['down']:.0f} Mb/s")
         self.speed_vals["up"].setText(f"{result['up']:.0f} Mb/s")
         self.speed_vals["ping"].setText(f"{result['ping']:.0f} ms" if result["ping"] is not None else "–")
-        self.l_speed_status.setText("Done. Uses about 45 MB of data per run.")
+        self.l_speed_status.setText("Done. Uses about 70 MB of data per run.")
 
     # ---------- IP / DNS settings ----------
     def load_form(self):

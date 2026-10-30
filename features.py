@@ -36,25 +36,31 @@ def run_speedtest(status, live):
                 live("down", got * 8 / (last - start) / 1e6)
     down = got * 8 / max(time.time() - start, 0.001) / 1e6
     live("down", down)
+    time.sleep(1.2)  # hold the download result, like Speedtest.net
     status("Testing upload…")
-    total, chunk = 6_000_000, bytes(65536)
+    live("up", 0)  # needle drops back to zero and the gauge switches to upload
+    time.sleep(1.0)
+    per_request, chunk = 2_000_000, bytes(65536)
     conn = http.client.HTTPSConnection(urllib.parse.urlparse(UP_URL).netloc, timeout=30)
     try:
-        conn.putrequest("POST", "/__up")
-        conn.putheader("User-Agent", UA["User-Agent"])
-        conn.putheader("Content-Type", "application/octet-stream")
-        conn.putheader("Content-Length", str(total))
-        conn.endheaders()
         t0, sent, last = time.time(), 0, 0.0
-        while sent < total:
-            piece = chunk[:min(len(chunk), total - sent)]
-            conn.send(piece)
-            sent += len(piece)
-            if time.time() - last > 0.15 and time.time() - t0 > 0.4:
-                last = time.time()
-                live("up", sent * 8 / (last - t0) / 1e6)
-        conn.getresponse().read()
-        up = total * 8 / max(time.time() - t0, 0.001) / 1e6
+        while time.time() - t0 < 8:
+            conn.putrequest("POST", "/__up")
+            conn.putheader("User-Agent", UA["User-Agent"])
+            conn.putheader("Content-Type", "application/octet-stream")
+            conn.putheader("Content-Length", str(per_request))
+            conn.endheaders()
+            left = per_request
+            while left:
+                piece = chunk[:min(len(chunk), left)]
+                conn.send(piece)
+                left -= len(piece)
+                sent += len(piece)
+                if time.time() - last > 0.15 and time.time() - t0 > 0.4:
+                    last = time.time()
+                    live("up", sent * 8 / (last - t0) / 1e6)
+            conn.getresponse().read()
+        up = sent * 8 / max(time.time() - t0, 0.001) / 1e6
     finally:
         conn.close()
     live("up", up)
