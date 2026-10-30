@@ -98,8 +98,12 @@ $('go').onclick=main;setTimeout(main,400);
 
 
 def device_name(ua):
-    if m := re.search(r"Android [\d.]+; ([^;)]+)", ua):
-        return m.group(1).strip()
+    if "Android" in ua:
+        m = re.search(r"Android [\d.]+; ([^;)]+)", ua)
+        model = m.group(1).strip() if m else ""
+        if len(model) > 1:  # Chrome hides the real model behind a placeholder such as "K"
+            return model
+        return "Android phone" if "Mobile" in ua else "Android tablet"
     for key, name in (("iPhone", "iPhone"), ("iPad", "iPad"), ("Windows", "Windows PC"), ("Macintosh", "Mac"),
                       ("CrOS", "Chromebook"), ("Linux", "Linux device")):
         if key in ua:

@@ -12,7 +12,7 @@ import psutil
 from PySide6.QtCore import QObject, QPoint, QRect, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QCursor, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
-    QApplication, QHBoxLayout, QInputDialog, QLayout, QLineEdit, QMenu, QMessageBox,
+    QApplication, QHBoxLayout, QInputDialog, QLabel, QLayout, QLineEdit, QMenu, QMessageBox,
     QPushButton, QSystemTrayIcon, QToolTip, QVBoxLayout, QWidget,
 )
 
@@ -80,6 +80,7 @@ class Card(QWidget):
         self.speed_running = False
         self.wifi, self.link_html, self.link_plain = {}, "", ""
         self.local = None
+        self.device_names, self.done_ip = dict(self.cfg.get("device_names", {})), None
         self.local_results = deque(self.cfg.get("local_results", []), maxlen=5)
         self.last_gateway, self.suggested = None, None
         self.pending_click = None
@@ -370,8 +371,15 @@ class Card(QWidget):
         dc = QVBoxLayout(self.done_card)
         dc.setContentsMargins(12, 10, 12, 10)
         dc.setSpacing(6)
+        title_row = QHBoxLayout()
         self.l_done_title = label("")
-        dc.addWidget(self.l_done_title)
+        self.b_rename = QPushButton("Rename")
+        self.b_rename.setProperty("small", True)
+        self.b_rename.setToolTip("Give this device a name. It's remembered by its IP address.")
+        self.b_rename.clicked.connect(lambda: self.rename_device(self.done_ip))
+        title_row.addWidget(self.l_done_title, 1)
+        title_row.addWidget(self.b_rename)
+        dc.addLayout(title_row)
         vals = QHBoxLayout()
         vals.setSpacing(20)
         self.done_vals = {}
@@ -412,8 +420,14 @@ class Card(QWidget):
                                     "same network.", dim=True)
         self.l_local_status.setWordWrap(True)
         lay.addWidget(self.l_local_status)
-        self.local_rows = [label("", mono=True) for _ in range(5)]
-        for row in self.local_rows:
+        self.local_rows = []
+        for i in range(5):
+            row = QLabel()  # not mouse-transparent, so it can show a right-click menu
+            row.setTextFormat(Qt.RichText)
+            row.setContextMenuPolicy(Qt.CustomContextMenu)
+            row.customContextMenuRequested.connect(lambda _pos, i=i: self.row_menu(i))
+            row.setToolTip("Right-click to rename this device")
+            self.local_rows.append(row)
             lay.addWidget(row)
         self.url_box.hide()
         self.qr.hide()
@@ -1054,8 +1068,49 @@ class Card(QWidget):
         self.l_local_status.setText("Server stopped. Start it again to test another device.")
         self.adjustSize()
 
+    def name_of(self, r):
+        return self.device_names.get(r["ip"]) or r["device"]
+
+    def rename_device(self, ip):
+        if not ip:
+            return
+        dialog = QInputDialog(self)
+        dialog.setWindowFlag(Qt.WindowStaysOnTopHint, True)
+        dialog.setWindowTitle("Rename device")
+        dialog.setLabelText(f"Name for {ip} (leave empty to reset)")
+        dialog.setTextValue(self.device_names.get(ip, ""))
+        if dialog.exec() != QInputDialog.Accepted:
+            return
+        name = dialog.textValue().strip()[:24]
+        if name:
+            self.device_names[ip] = name
+        else:
+            self.device_names.pop(ip, None)
+        self.cfg["device_names"] = self.device_names
+        self.save()
+        self.render_local_results()
+        if self.done_ip == ip and self.local_results:
+            self.show_done(self.local_results[0])
+
+    def row_menu(self, i):
+        if i >= len(self.local_results):
+            return
+        r = self.local_results[i]
+        menu = QMenu(self)
+        menu.addAction(f"Rename {r['ip']}…", lambda: self.rename_device(r["ip"]))
+        menu.exec(QCursor.pos())
+
+    def show_done(self, r):
+        who = f"{self.name_of(r)} ({r['ip']})"
+        self.done_ip = r["ip"]
+        self.l_done_title.setText(f"<span style='color:{P.GREEN}'><b>✓ Test complete</b></span> · {who}")
+        self.done_vals["down"].setText(rate(r["down"]))
+        self.done_vals["up"].setText(rate(r["up"]))
+        self.done_vals["ping"].setText(f"{r['ping']:.0f} ms")
+        self.done_card.show()
+
     def on_local_result(self, r):
-        who = f"{r['device']} ({r['ip']})"
+        who = f"{self.name_of(r)} ({r['ip']})"
         if r.get("event") == "start":
             self.done_card.hide()
             self.l_local_status.setText(f"Testing {who}…")
@@ -1064,13 +1119,9 @@ class Card(QWidget):
         self.local_results.appendleft(r)
         self.cfg["local_results"] = list(self.local_results)
         self.render_local_results()
-        self.l_done_title.setText(f"<span style='color:{P.GREEN}'><b>✓ Test complete</b></span> · {who}")
-        self.done_vals["down"].setText(rate(r["down"]))
-        self.done_vals["up"].setText(rate(r["up"]))
-        self.done_vals["ping"].setText(f"{r['ping']:.0f} ms")
-        self.done_card.show()
+        self.show_done(r)
         self.l_local_status.setText("Run it again on the device, or scan the code with another one.")
-        self.notify("Local speed test finished", f"{r['device']}: ↓{rate(r['down'])} ↑{rate(r['up'])}, "
+        self.notify("Local speed test finished", f"{self.name_of(r)}: ↓{rate(r['down'])} ↑{rate(r['up'])}, "
                                                  f"ping {r['ping']:.0f} ms")
         self.adjustSize()
         self.save()
@@ -1098,7 +1149,10 @@ class Card(QWidget):
         for i, row in enumerate(self.local_rows):
             if i < len(self.local_results):
                 r = self.local_results[i]
-                row.setText(f"{r['time']} {r['device'][:10]:<10} ↓{rate(r['down'])} ↑{rate(r['up'])} {r['ping']:.0f}ms")
+                dim = f"color:{P.DIM}"
+                row.setText(f"<b>{self.name_of(r)}</b> <span style='{dim}'>· {r['ip']} · {r['time']}</span><br>"
+                            f"<span style='font-family:Consolas'>↓{rate(r['down'])}  ↑{rate(r['up'])}  "
+                            f"{r['ping']:.0f} ms</span>")
             row.setVisible(i < len(self.local_results))
 
     def allow_firewall(self):
