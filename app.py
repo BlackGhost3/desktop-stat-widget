@@ -896,6 +896,7 @@ class Card(QWidget):
         self.speed_vals["down"].setText(f"{result['down']:.0f} Mb/s")
         self.speed_vals["up"].setText(f"{result['up']:.0f} Mb/s")
         self.speed_vals["ping"].setText(f"{result['ping']:.0f} ms" if result["ping"] is not None else "–")
+        self.gauge.finish()
         self.l_speed_status.setText("Done. Uses about 70 MB of data per run.")
 
     # ---------- IP / DNS settings ----------

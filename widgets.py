@@ -88,7 +88,7 @@ class Gauge(QWidget):
         super().__init__()
         self.setFixedHeight(height)
         self.shown = self.target = 0.0
-        self.phase, self.key = "", "ACCENT"
+        self.phase, self.key, self.done = "", "ACCENT", False
         self.timer = QTimer(self, interval=25, timeout=self.ease)
 
     def frac(self, v):
@@ -102,6 +102,8 @@ class Gauge(QWidget):
     def set_value(self, mbps, phase=None, key=None):
         self.target = mbps
         if phase is not None:
+            self.done = False
+        if phase is not None:
             self.phase = phase
         if key:
             self.key = key
@@ -110,8 +112,13 @@ class Gauge(QWidget):
 
     def reset(self):
         self.shown = self.target = 0.0
-        self.phase = ""
+        self.phase, self.done = "", False
         self.update()
+
+    def finish(self):
+        """Test over: the needle falls back to zero and the dial says so, leaving the results to the tiles."""
+        self.done = True
+        self.set_value(0.0)
 
     def ease(self):
         self.shown += (self.target - self.shown) * 0.25
@@ -148,18 +155,20 @@ class Gauge(QWidget):
             p.drawText(QRectF(pt.x() - 16, pt.y() - 7, 32, 14), Qt.AlignCenter, str(mark))
         tip = self.point(f, r - 28, cx, cy)
         p.setPen(QPen(QColor(P.TEXT), 2, Qt.SolidLine, Qt.RoundCap))
-        p.drawLine(QPointF(cx, cy), tip)
+        if not self.done:
+            p.drawLine(QPointF(cx, cy), tip)
         p.setBrush(QColor(P.TEXT))
         p.drawEllipse(QPointF(cx, cy), 4, 4)
         p.setPen(QColor(P.TEXT))
         big = QFont("Segoe UI", 17)
         big.setWeight(QFont.Medium)
         p.setFont(big)
-        p.drawText(QRectF(cx - 60, cy + r * 0.32, 120, 28), Qt.AlignCenter, f"{self.shown:.1f}" if self.shown < 100 else f"{self.shown:.0f}")
+        number = "Done" if self.done else (f"{self.shown:.1f}" if self.shown < 100 else f"{self.shown:.0f}")
+        p.drawText(QRectF(cx - 60, cy + r * 0.32, 120, 28), Qt.AlignCenter, number)
         p.setFont(QFont("Segoe UI", 8))
         p.setPen(QColor(P.DIM))
-        p.drawText(QRectF(cx - 60, cy + r * 0.32 + 26, 120, 14), Qt.AlignCenter,
-                   f"{self.phase} · Mb/s" if self.phase else "Mb/s")
+        caption = "Results below" if self.done else (f"{self.phase} · Mb/s" if self.phase else "Mb/s")
+        p.drawText(QRectF(cx - 60, cy + r * 0.32 + 26, 120, 14), Qt.AlignCenter, caption)
 
 
 class Metric(QWidget):
